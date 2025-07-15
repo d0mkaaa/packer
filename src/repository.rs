@@ -8,17 +8,11 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use futures::StreamExt;
 use indicatif::ProgressBar;
+use log::{debug, info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-    collections::HashSet,
-};
+use std::{collections::HashMap, collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{fs, time::sleep};
-use log::{debug, info, warn};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryHealth {
     pub status: RepositoryStatus,
@@ -206,25 +200,37 @@ impl GitHubClient {
             .timeout(Duration::from_secs(30))
             .build()
             .unwrap();
-        Self { client, _token: token }
+        Self {
+            client,
+            _token: token,
+        }
     }
     pub async fn get_releases(&self, owner: &str, repo: &str) -> PackerResult<Vec<GitHubRelease>> {
         let url = format!("https://api.github.com/repos/{}/{}/releases", owner, repo);
         let response = self.client.get(&url).send().await?;
         if !response.status().is_success() {
             return Err(PackerError::RepositoryError(format!(
-                "GitHub API error: {}", response.status()
+                "GitHub API error: {}",
+                response.status()
             )));
         }
         let releases: Vec<GitHubRelease> = response.json().await?;
         Ok(releases)
     }
-    pub async fn search_repositories(&self, query: &str, per_page: u32) -> PackerResult<Vec<serde_json::Value>> {
-        let url = format!("https://api.github.com/search/repositories?q={}&per_page={}", query, per_page);
+    pub async fn search_repositories(
+        &self,
+        query: &str,
+        per_page: u32,
+    ) -> PackerResult<Vec<serde_json::Value>> {
+        let url = format!(
+            "https://api.github.com/search/repositories?q={}&per_page={}",
+            query, per_page
+        );
         let response = self.client.get(&url).send().await?;
         if !response.status().is_success() {
             return Err(PackerError::RepositoryError(format!(
-                "GitHub search error: {}", response.status()
+                "GitHub search error: {}",
+                response.status()
             )));
         }
         let result: serde_json::Value = response.json().await?;
@@ -295,7 +301,8 @@ impl RepositoryManager {
                 health: RepositoryHealth::default(),
                 mirror_status: MirrorStatus::default(),
             };
-            self.repositories.insert(repo_config.name.clone(), repository);
+            self.repositories
+                .insert(repo_config.name.clone(), repository);
         }
         info!("Initialized {} repositories", self.repositories.len());
         Ok(())
@@ -308,9 +315,10 @@ impl RepositoryManager {
             .filter(|entry| entry.value().enabled)
             .map(|entry| entry.key().clone())
             .collect();
-        let tasks: Vec<_> = repo_names.iter().map(|repo_name| {
-            self.update_repository_concurrent(repo_name)
-        }).collect();
+        let tasks: Vec<_> = repo_names
+            .iter()
+            .map(|repo_name| self.update_repository_concurrent(repo_name))
+            .collect();
         let results = futures::future::join_all(tasks).await;
         for (_i, result) in results.into_iter().enumerate() {
             if let Err(e) = result {
@@ -322,8 +330,9 @@ impl RepositoryManager {
         Ok(())
     }
     async fn update_repository_concurrent(&self, name: &str) -> PackerResult<()> {
-        let repo_config = self.config.get_repository(name)
-            .ok_or_else(|| PackerError::RepositoryError(format!("Repository {} not found ", name)))?;
+        let repo_config = self.config.get_repository(name).ok_or_else(|| {
+            PackerError::RepositoryError(format!("Repository {} not found ", name))
+        })?;
         match repo_config.repo_type {
             RepositoryType::Packer => self.update_packer_repository(name).await,
             RepositoryType::AUR => self.update_aur_repository(name).await,
@@ -338,7 +347,7 @@ impl RepositoryManager {
             RepositoryType::Flatpak => {
                 println!("Flatpak repository updates not yet implemented");
                 Ok(())
-            },
+            }
             RepositoryType::AppImage => {
                 println!("AppImage repository updates not yet implemented");
                 Ok(())
@@ -346,21 +355,22 @@ impl RepositoryManager {
             RepositoryType::Cargo => {
                 println!("Cargo repository updates not yet implemented");
                 Ok(())
-            },
+            }
             RepositoryType::Nix => {
                 println!("Nix repository updates not yet implemented");
                 Ok(())
-            },
+            }
             RepositoryType::Homebrew => {
                 println!("Homebrew repository updates not yet implemented");
                 Ok(())
-            },
+            }
         }
     }
     async fn update_packer_repository(&self, name: &str) -> PackerResult<()> {
         let repo_url = {
-            let repo = self.repositories.get(name)
-                .ok_or_else(|| PackerError::RepositoryError(format!("Repository {} not found ", name)))?;
+            let repo = self.repositories.get(name).ok_or_else(|| {
+                PackerError::RepositoryError(format!("Repository {} not found ", name))
+            })?;
             repo.url.clone()
         };
         info!("Updating Packer repository: {}", name);
@@ -374,7 +384,8 @@ impl RepositoryManager {
         }
         let index: RepositoryIndex = response.json().await?;
         if let Some(signature) = &index.signature {
-            self.verify_repository_signature(&index, signature, name).await?;
+            self.verify_repository_signature(&index, signature, name)
+                .await?;
         }
         debug!("Repository {} has {} packages ", name, index.packages.len());
         let mut packages_to_add = Vec::new();
@@ -391,17 +402,25 @@ impl RepositoryManager {
                 repo.metadata = metadata;
             }
         }
-        info!("Repository {} updated with {} packages ", name, 
-              self.repositories.get(name).map(|r| r.packages.len()).unwrap_or(0));
+        info!(
+            "Repository {} updated with {} packages ",
+            name,
+            self.repositories
+                .get(name)
+                .map(|r| r.packages.len())
+                .unwrap_or(0)
+        );
         Ok(())
     }
     async fn update_github_repository(&self, name: &str) -> PackerResult<()> {
         info!("Updating GitHub repository: {}", name);
-        let github_client = self.github_client.as_ref()
+        let github_client = self
+            .github_client
+            .as_ref()
             .ok_or_else(|| PackerError::RepositoryError("GitHub client not initialized".into()))?;
-        let popular_packages = github_client.search_repositories(
-            "language:rust stars:>100 archived:false", 50
-        ).await?;
+        let popular_packages = github_client
+            .search_repositories("language:rust stars:>100 archived:false", 50)
+            .await?;
         let mut packages = HashMap::new();
         for repo_info in popular_packages {
             if let Some(package) = self.github_repo_to_package(repo_info, name).await? {
@@ -412,16 +431,26 @@ impl RepositoryManager {
             repo.packages = packages;
             repo.last_update = Some(Utc::now());
         }
-        info!("GitHub repository {} updated with {} packages ", name,
-              self.repositories.get(name).map(|r| r.packages.len()).unwrap_or(0));
+        info!(
+            "GitHub repository {} updated with {} packages ",
+            name,
+            self.repositories
+                .get(name)
+                .map(|r| r.packages.len())
+                .unwrap_or(0)
+        );
         Ok(())
     }
     async fn update_aur_repository(&self, name: &str) -> PackerResult<()> {
         info!("Updating AUR repository: {}", name);
-        
+
         let search_url = "https://aur.archlinux.org/rpc/?v=5&type=search&by=popularity&arg=";
-        let response = self.client.get(&format!("{}popular", search_url)).send().await?;
-        
+        let response = self
+            .client
+            .get(&format!("{}popular", search_url))
+            .send()
+            .await?;
+
         let mut package_names = Vec::new();
         if response.status().is_success() {
             if let Ok(json) = response.json::<serde_json::Value>().await {
@@ -434,21 +463,40 @@ impl RepositoryManager {
                 }
             }
         }
-        
+
         if package_names.is_empty() {
             // Use only highly relevant, commonly searched packages for fallback
             package_names = vec![
-                "git".to_string(), "neofetch".to_string(), "yay".to_string(), "paru".to_string(),
-                "visual-studio-code-bin".to_string(), "google-chrome".to_string(), "firefox".to_string(),
-                "discord".to_string(), "spotify".to_string(), "slack-desktop".to_string(),
-                "docker".to_string(), "nodejs".to_string(), "python".to_string(), "vim".to_string(),
-                "htop".to_string(), "bat".to_string(), "ripgrep".to_string(), "fd".to_string(),
-                "steam".to_string(), "gimp".to_string(), "vlc".to_string(), "obs-studio".to_string()
+                "git".to_string(),
+                "neofetch".to_string(),
+                "yay".to_string(),
+                "paru".to_string(),
+                "visual-studio-code-bin".to_string(),
+                "google-chrome".to_string(),
+                "firefox".to_string(),
+                "discord".to_string(),
+                "spotify".to_string(),
+                "slack-desktop".to_string(),
+                "docker".to_string(),
+                "nodejs".to_string(),
+                "python".to_string(),
+                "vim".to_string(),
+                "htop".to_string(),
+                "bat".to_string(),
+                "ripgrep".to_string(),
+                "fd".to_string(),
+                "steam".to_string(),
+                "gimp".to_string(),
+                "vlc".to_string(),
+                "obs-studio".to_string(),
             ];
         }
         let mut packages = HashMap::new();
         for package_name in &package_names {
-            let url = format!("https://aur.archlinux.org/rpc/?v=5&type=info&arg={}", package_name);
+            let url = format!(
+                "https://aur.archlinux.org/rpc/?v=5&type=info&arg={}",
+                package_name
+            );
             match self.client.get(&url).send().await {
                 Ok(response) => {
                     if response.status().is_success() {
@@ -456,13 +504,23 @@ impl RepositoryManager {
                             Ok(json) => {
                                 if let Some(results) = json["results"].as_array() {
                                     if let Some(result) = results.first() {
-                                        let package_name = result["Name"].as_str().unwrap_or("").to_string();
-                                        let download_size = self.estimate_aur_package_size(result).await;
-                                        let installed_size = self.estimate_aur_installed_size(result, download_size).await;
+                                        let package_name =
+                                            result["Name"].as_str().unwrap_or("").to_string();
+                                        let download_size =
+                                            self.estimate_aur_package_size(result).await;
+                                        let installed_size = self
+                                            .estimate_aur_installed_size(result, download_size)
+                                            .await;
                                         let package = Package {
                                             name: package_name.clone(),
-                                            version: result["Version"].as_str().unwrap_or("1.0.0").to_string(),
-                                            description: result["Description"].as_str().unwrap_or("").to_string(),
+                                            version: result["Version"]
+                                                .as_str()
+                                                .unwrap_or("1.0.0")
+                                                .to_string(),
+                                            description: result["Description"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string(),
                                             repository: name.to_string(),
                                             arch: "x86_64".to_string(),
                                             size: download_size,
@@ -471,10 +529,16 @@ impl RepositoryManager {
                                             conflicts: Vec::new(),
                                             provides: Vec::new(),
                                             replaces: Vec::new(),
-                                            maintainer: result["Maintainer"].as_str().unwrap_or("").to_string(),
-                                            license: result["License"].as_str().unwrap_or("Unknown").to_string(),
-                                                                        url: result["URL"].as_str().unwrap_or("").to_string(),
-                            checksum: "".to_string(),
+                                            maintainer: result["Maintainer"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            license: result["License"]
+                                                .as_str()
+                                                .unwrap_or("Unknown")
+                                                .to_string(),
+                                            url: result["URL"].as_str().unwrap_or("").to_string(),
+                                            checksum: "".to_string(),
                                             signature: None,
                                             build_date: Utc::now(),
                                             install_date: None,
@@ -488,13 +552,16 @@ impl RepositoryManager {
                                                 post_upgrade: None,
                                             },
                                             health: crate::package::PackageHealth::default(),
-                                            compatibility: crate::package::CompatibilityInfo::default(),
+                                            compatibility:
+                                                crate::package::CompatibilityInfo::default(),
                                         };
                                         packages.insert(package.name.clone(), package);
                                     }
                                 }
                             }
-                            Err(e) => warn!("Failed to parse AUR response for {}: {}", package_name, e),
+                            Err(e) => {
+                                warn!("Failed to parse AUR response for {}: {}", package_name, e)
+                            }
                         }
                     }
                 }
@@ -505,8 +572,13 @@ impl RepositoryManager {
             repo.packages = packages;
             repo.last_update = Some(Utc::now());
         }
-        info!("Updated AUR repository with {} packages ", 
-              self.repositories.get(name).map(|r| r.packages.len()).unwrap_or(0));
+        info!(
+            "Updated AUR repository with {} packages ",
+            self.repositories
+                .get(name)
+                .map(|r| r.packages.len())
+                .unwrap_or(0)
+        );
         Ok(())
     }
     async fn estimate_aur_package_size(&self, package_info: &serde_json::Value) -> u64 {
@@ -516,41 +588,63 @@ impl RepositoryManager {
             Ok(size) if size > 0 => {
                 debug!("Got real size for {}: {} bytes ", package_name, size);
                 size
-            },
+            }
             Ok(_) | Err(_) => {
-                debug!("Failed to get real size for {}, using fallback estimation ", package_name);
+                debug!(
+                    "Failed to get real size for {}, using fallback estimation ",
+                    package_name
+                );
                 match package_name {
-                    name if name.contains("bin ") => 50 * 1024 * 1024,  
-                    name if name.contains("git") => 20 * 1024 * 1024,  
-                    _ => 10 * 1024 * 1024,  
+                    name if name.contains("bin ") => 50 * 1024 * 1024,
+                    name if name.contains("git") => 20 * 1024 * 1024,
+                    _ => 10 * 1024 * 1024,
                 }
             }
         }
     }
     async fn get_real_aur_package_size(&self, package_name: &str) -> PackerResult<u64> {
-        debug!("Downloading PKGBUILD for {} to calculate real size ", package_name);
-        let pkgbuild_url = format!("https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={}", package_name);
+        debug!(
+            "Downloading PKGBUILD for {} to calculate real size ",
+            package_name
+        );
+        let pkgbuild_url = format!(
+            "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={}",
+            package_name
+        );
         let response = self.client.get(&pkgbuild_url).send().await?;
         if !response.status().is_success() {
-            return Err(PackerError::NetworkError(format!("Failed to download PKGBUILD for {}", package_name)));
+            return Err(PackerError::NetworkError(format!(
+                "Failed to download PKGBUILD for {}",
+                package_name
+            )));
         }
         let pkgbuild_content = response.text().await?;
-        debug!("Downloaded PKGBUILD for {}, parsing sources...", package_name);
+        debug!(
+            "Downloaded PKGBUILD for {}, parsing sources...",
+            package_name
+        );
         let source_urls = self.parse_pkgbuild_sources(&pkgbuild_content)?;
-        debug!("Found {} source URLs for {}", source_urls.len(), package_name);
+        debug!(
+            "Found {} source URLs for {}",
+            source_urls.len(),
+            package_name
+        );
         let mut total_size = 0u64;
         for url in source_urls {
             match self.get_url_size(&url).await {
                 Ok(size) => {
                     debug!("Source {} size: {} bytes ", url, size);
                     total_size += size;
-                },
+                }
                 Err(e) => {
                     debug!("Failed to get size for {}: {}", url, e);
                 }
             }
         }
-        debug!("Total calculated size for {}: {} bytes ", package_name, total_size);
+        debug!(
+            "Total calculated size for {}: {} bytes ",
+            package_name, total_size
+        );
         Ok(total_size)
     }
     fn parse_pkgbuild_sources(&self, pkgbuild_content: &str) -> PackerResult<Vec<String>> {
@@ -563,12 +657,15 @@ impl RepositoryManager {
             let line = line.trim();
             if let Some(eq_pos) = line.find('=') {
                 let var_name = line[..eq_pos].trim();
-                let var_value = line[eq_pos + 1..].trim().trim_matches('"').trim_matches('\'');
+                let var_value = line[eq_pos + 1..]
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
                 match var_name {
                     "pkgver" | "pkgrel" | "epoch" | "pkgname" | "_pkgname" => {
                         variables.insert(var_name.to_string(), var_value.to_string());
                         debug!("Found variable: {} = {}", var_name, var_value);
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -608,7 +705,12 @@ impl RepositoryManager {
         }
         Ok(sources)
     }
-    fn extract_urls_from_source_line(&self, source_line: &str, sources: &mut Vec<String>, variables: &std::collections::HashMap<String, String>) {
+    fn extract_urls_from_source_line(
+        &self,
+        source_line: &str,
+        sources: &mut Vec<String>,
+        variables: &std::collections::HashMap<String, String>,
+    ) {
         debug!("Extracting URLs from source line: {}", source_line);
         let parts: Vec<&str> = source_line.split_whitespace().collect();
         for part in parts {
@@ -619,16 +721,21 @@ impl RepositoryManager {
             } else {
                 clean_part
             };
-                        if url_part.starts_with("http:") ||
-                url_part.starts_with("https://") ||
-                url_part.starts_with("ftp:") {
+            if url_part.starts_with("http:")
+                || url_part.starts_with("https://")
+                || url_part.starts_with("ftp:")
+            {
                 let resolved_url = self.resolve_pkgbuild_variables(url_part, variables);
                 debug!("Found URL: {} -> {}", url_part, resolved_url);
                 sources.push(resolved_url);
             }
         }
     }
-    fn resolve_pkgbuild_variables(&self, url: &str, variables: &std::collections::HashMap<String, String>) -> String {
+    fn resolve_pkgbuild_variables(
+        &self,
+        url: &str,
+        variables: &std::collections::HashMap<String, String>,
+    ) -> String {
         let mut resolved_url = url.to_string();
         for (var_name, var_value) in variables {
             let pattern = format!("${{{}}}", var_name);
@@ -643,7 +750,10 @@ impl RepositoryManager {
         debug!("Getting size for URL: {}", url);
         let response = self.client.head(url).send().await?;
         if !response.status().is_success() {
-            return Err(PackerError::NetworkError(format!("Failed to get size for URL: {}", url)));
+            return Err(PackerError::NetworkError(format!(
+                "Failed to get size for URL: {}",
+                url
+            )));
         }
         if let Some(content_length) = response.headers().get("content-length ") {
             if let Ok(size_str) = content_length.to_str() {
@@ -656,16 +766,25 @@ impl RepositoryManager {
         debug!("No content-length header for URL: {}", url);
         Ok(0)
     }
-    async fn estimate_aur_installed_size(&self, package_info: &serde_json::Value, download_size: u64) -> u64 {
+    async fn estimate_aur_installed_size(
+        &self,
+        package_info: &serde_json::Value,
+        download_size: u64,
+    ) -> u64 {
         let package_name = package_info["Name"].as_str().unwrap_or("");
         let base_multiplier = match package_name {
-            name if name.contains("chrome") || name.contains("firefox") || name.contains("brave") => 2.0,
+            name if name.contains("chrome")
+                || name.contains("firefox")
+                || name.contains("brave") =>
+            {
+                2.0
+            }
             name if name.contains("discord") || name.contains("slack") => 1.5,
             name if name.contains("spotify") => 2.0,
             name if name.contains("zoom") => 2.5,
             name if name.contains("vscode") || name.contains("visual-studio ") => 1.8,
-            name if name == "cursor-bin " => 1.6,  
-            name if name.contains("cursor") => 1.6,  
+            name if name == "cursor-bin " => 1.6,
+            name if name.contains("cursor") => 1.6,
             name if name.contains("gimp") => 2.2,
             name if name.contains("vlc") => 3.0,
             name if name.contains("obs") => 3.5,
@@ -674,17 +793,18 @@ impl RepositoryManager {
             name if name.contains("bat") || name.contains("fd") || name.contains("ripgrep") => 2.5,
             name if name.contains("exa") || name.contains("tree") => 2.0,
             name if name.ends_with("-bin ") => 1.5,
-            _ => 3.0,  
+            _ => 3.0,
         };
         (download_size as f64 * base_multiplier) as u64
     }
     async fn update_arch_repository(&self, name: &str) -> PackerResult<()> {
         info!("Updating Arch repository: {}", name);
-        let _repo_config = self.config.get_repository(name)
-            .ok_or_else(|| PackerError::RepositoryError(format!("Repository {} not found ", name)))?;
+        let _repo_config = self.config.get_repository(name).ok_or_else(|| {
+            PackerError::RepositoryError(format!("Repository {} not found ", name))
+        })?;
         let packages_api_url = format!("https://archlinux.org/packages/search/json/?repo={}", name);
         let response = self.client.get(&packages_api_url).send().await?;
-        
+
         let mut packages = Vec::new();
         if response.status().is_success() {
             if let Ok(json) = response.json::<serde_json::Value>().await {
@@ -697,9 +817,12 @@ impl RepositoryManager {
                 }
             }
         }
-        
+
         if packages.is_empty() {
-            warn!("No packages found for repository {}, using fallback data", name);
+            warn!(
+                "No packages found for repository {}, using fallback data",
+                name
+            );
             packages = self.get_fallback_arch_packages(name);
         }
         if let Some(mut repo) = self.repositories.get_mut(name) {
@@ -710,37 +833,54 @@ impl RepositoryManager {
             repo.last_update = Some(Utc::now());
             repo.metadata.package_count = repo.packages.len();
         }
-        info!("Successfully updated Arch repository: {} with {} packages ", name, 
-              self.repositories.get(name).map(|r| r.packages.len()).unwrap_or(0));
+        info!(
+            "Successfully updated Arch repository: {} with {} packages ",
+            name,
+            self.repositories
+                .get(name)
+                .map(|r| r.packages.len())
+                .unwrap_or(0)
+        );
         Ok(())
     }
-    async fn parse_arch_api_package(&self, json: &serde_json::Value, repository_name: &str) -> PackerResult<Option<Package>> {
+    async fn parse_arch_api_package(
+        &self,
+        json: &serde_json::Value,
+        repository_name: &str,
+    ) -> PackerResult<Option<Package>> {
         let name = json["pkgname"].as_str().unwrap_or("").to_string();
         if name.is_empty() {
             return Ok(None);
         }
-        
-        let version = format!("{}{}",
+
+        let version = format!(
+            "{}{}",
             json["pkgver"].as_str().unwrap_or("1.0.0"),
-            json["pkgrel"].as_str().map(|r| format!("-{}", r)).unwrap_or_default()
+            json["pkgrel"]
+                .as_str()
+                .map(|r| format!("-{}", r))
+                .unwrap_or_default()
         );
-        
+
         let description = json["pkgdesc"].as_str().unwrap_or("").to_string();
         let arch = json["arch"].as_str().unwrap_or("x86_64").to_string();
-        let maintainer = json["maintainers"].as_array()
+        let maintainer = json["maintainers"]
+            .as_array()
             .and_then(|m| m.first())
             .and_then(|m| m.as_str())
             .unwrap_or("")
             .to_string();
-        
+
         let url = json["url"].as_str().unwrap_or("").to_string();
-        let license = json["licenses"].as_array()
+        let license = json["licenses"]
+            .as_array()
             .and_then(|l| l.first())
             .and_then(|l| l.as_str())
             .unwrap_or("Unknown")
             .to_string();
-            
-        let dependencies = json["depends"].as_array()
+
+        let dependencies = json["depends"]
+            .as_array()
             .map(|deps| {
                 deps.iter()
                     .filter_map(|d| d.as_str())
@@ -755,12 +895,13 @@ impl RepositoryManager {
                     .collect()
             })
             .unwrap_or_default();
-            
-        let build_date = json["build_date"].as_str()
+
+        let build_date = json["build_date"]
+            .as_str()
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
-        
+
         Ok(Some(Package {
             name,
             version,
@@ -793,7 +934,7 @@ impl RepositoryManager {
             health: crate::package::PackageHealth::default(),
         }))
     }
-    
+
     fn get_fallback_arch_packages(&self, repo_name: &str) -> Vec<Package> {
         let packages = match repo_name {
             "core" => vec![
@@ -801,25 +942,50 @@ impl RepositoryManager {
                 ("systemd", "255.10-2", "System and service manager"),
                 ("glibc", "2.40+r16+gaa533d58ff-2", "GNU C Library"),
                 ("linux", "6.11.3.arch1-1", "The Linux kernel and modules"),
-                ("gcc", "14.2.1+r134+gab884fffe3fc-1", "The GNU Compiler Collection"),
+                (
+                    "gcc",
+                    "14.2.1+r134+gab884fffe3fc-1",
+                    "The GNU Compiler Collection",
+                ),
             ],
             "extra" => vec![
                 ("firefox", "131.0.2-1", "Fast, Private & Safe Web Browser"),
-                ("vlc", "3.0.21-4", "Multi-platform MPEG, VCD/DVD, and DivX player"),
+                (
+                    "vlc",
+                    "3.0.21-4",
+                    "Multi-platform MPEG, VCD/DVD, and DivX player",
+                ),
                 ("gimp", "2.10.38-2", "GNU Image Manipulation Program"),
-                ("libreoffice-fresh", "24.8.2-1", "LibreOffice branch with new features"),
+                (
+                    "libreoffice-fresh",
+                    "24.8.2-1",
+                    "LibreOffice branch with new features",
+                ),
                 ("code", "1.94.2-1", "Visual Studio Code"),
             ],
             "multilib" => vec![
-                ("lib32-glibc", "2.40+r16+gaa533d58ff-2", "GNU C Library (32-bit)"),
-                ("steam", "1.0.0.81-1", "Valve's digital software delivery system"),
-                ("wine", "9.18-1", "Compatibility layer for running Windows programs"),
+                (
+                    "lib32-glibc",
+                    "2.40+r16+gaa533d58ff-2",
+                    "GNU C Library (32-bit)",
+                ),
+                (
+                    "steam",
+                    "1.0.0.81-1",
+                    "Valve's digital software delivery system",
+                ),
+                (
+                    "wine",
+                    "9.18-1",
+                    "Compatibility layer for running Windows programs",
+                ),
             ],
             _ => vec![],
         };
-        
-        packages.into_iter().map(|(name, version, desc)| {
-            Package {
+
+        packages
+            .into_iter()
+            .map(|(name, version, desc)| Package {
                 name: name.to_string(),
                 version: version.to_string(),
                 description: desc.to_string(),
@@ -849,20 +1015,34 @@ impl RepositoryManager {
                 },
                 compatibility: crate::package::CompatibilityInfo::default(),
                 health: crate::package::PackageHealth::default(),
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     async fn update_npm_repository(&self, name: &str) -> PackerResult<()> {
         info!("Updating NPM repository: {}", name);
         let registry_url = "https://registry.npmjs.org";
         let popular_packages = [
-            "react", "vue", "angular", "express", "lodash", "moment", "axios", 
-            "webpack", "babel", "typescript", "eslint", "prettier", "jest"
+            "react",
+            "vue",
+            "angular",
+            "express",
+            "lodash",
+            "moment",
+            "axios",
+            "webpack",
+            "babel",
+            "typescript",
+            "eslint",
+            "prettier",
+            "jest",
         ];
         let mut packages = Vec::new();
         for package_name in &popular_packages {
-            match self.fetch_npm_package_info(registry_url, package_name).await {
+            match self
+                .fetch_npm_package_info(registry_url, package_name)
+                .await
+            {
                 Ok(package) => packages.push(package),
                 Err(e) => warn!("Failed to fetch NPM package {}: {}", package_name, e),
             }
@@ -875,27 +1055,40 @@ impl RepositoryManager {
             repo.last_update = Some(Utc::now());
             repo.metadata.package_count = repo.packages.len();
         }
-        info!("Updated NPM repository with {} packages ", 
-              self.repositories.get(name).map(|r| r.packages.len()).unwrap_or(0));
+        info!(
+            "Updated NPM repository with {} packages ",
+            self.repositories
+                .get(name)
+                .map(|r| r.packages.len())
+                .unwrap_or(0)
+        );
         Ok(())
     }
-    async fn fetch_npm_package_info(&self, registry_url: &str, package_name: &str) -> PackerResult<Package> {
+    async fn fetch_npm_package_info(
+        &self,
+        registry_url: &str,
+        package_name: &str,
+    ) -> PackerResult<Package> {
         let url = format!("{}/{}", registry_url, package_name);
         let response = self.client.get(&url).send().await?;
         if !response.status().is_success() {
             return Err(PackerError::RepositoryError(format!(
-                "Failed to fetch NPM package {}: HTTP {}", 
-                package_name, response.status()
+                "Failed to fetch NPM package {}: HTTP {}",
+                package_name,
+                response.status()
             )));
         }
         let package_info: serde_json::Value = response.json().await?;
-        let name = package_info["name"].as_str()
+        let name = package_info["name"]
+            .as_str()
             .unwrap_or(package_name)
             .to_string();
-        let latest_version = package_info["dist-tags"]["latest"].as_str()
+        let latest_version = package_info["dist-tags"]["latest"]
+            .as_str()
             .unwrap_or("0.0.0")
             .to_string();
-        let description = package_info["description"].as_str()
+        let description = package_info["description"]
+            .as_str()
             .unwrap_or("")
             .to_string();
         let maintainer = package_info["maintainers"]
@@ -904,26 +1097,27 @@ impl RepositoryManager {
             .and_then(|m| m["name"].as_str())
             .unwrap_or("unknown")
             .to_string();
-        let license = package_info["license"].as_str()
+        let license = package_info["license"]
+            .as_str()
             .unwrap_or("unknown")
             .to_string();
-        let url = package_info["homepage"].as_str()
-            .unwrap_or("")
-            .to_string();
+        let url = package_info["homepage"].as_str().unwrap_or("").to_string();
         let size = package_info["versions"][&latest_version]["dist"]["unpackedSize"]
             .as_u64()
             .unwrap_or(0);
         let dependencies = package_info["versions"][&latest_version]["dependencies"]
             .as_object()
             .map(|deps| {
-                deps.keys().map(|dep_name| Dependency {
-                    name: dep_name.clone(),
-                    version_req: deps[dep_name].as_str().map(|v| v.to_string()),
-                    arch: None,
-                    os: None,
-                    optional: false,
-                    description: None,
-                }).collect()
+                deps.keys()
+                    .map(|dep_name| Dependency {
+                        name: dep_name.clone(),
+                        version_req: deps[dep_name].as_str().map(|v| v.to_string()),
+                        arch: None,
+                        os: None,
+                        optional: false,
+                        description: None,
+                    })
+                    .collect()
             })
             .unwrap_or_default();
         Ok(Package {
@@ -962,8 +1156,18 @@ impl RepositoryManager {
         info!("Updating PyPI repository: {}", name);
         let pypi_url = "https://pypi.org/pypi";
         let popular_packages = [
-            "requests", "numpy", "pandas", "matplotlib", "django", "flask", 
-            "tensorflow", "pytorch", "scikit-learn", "boto3", "click", "pillow"
+            "requests",
+            "numpy",
+            "pandas",
+            "matplotlib",
+            "django",
+            "flask",
+            "tensorflow",
+            "pytorch",
+            "scikit-learn",
+            "boto3",
+            "click",
+            "pillow",
         ];
         let mut packages = Vec::new();
         for package_name in &popular_packages {
@@ -980,40 +1184,41 @@ impl RepositoryManager {
             repo.last_update = Some(Utc::now());
             repo.metadata.package_count = repo.packages.len();
         }
-        info!("Updated PyPI repository with {} packages ", 
-              self.repositories.get(name).map(|r| r.packages.len()).unwrap_or(0));
+        info!(
+            "Updated PyPI repository with {} packages ",
+            self.repositories
+                .get(name)
+                .map(|r| r.packages.len())
+                .unwrap_or(0)
+        );
         Ok(())
     }
-    async fn fetch_pypi_package_info(&self, pypi_url: &str, package_name: &str) -> PackerResult<Package> {
+    async fn fetch_pypi_package_info(
+        &self,
+        pypi_url: &str,
+        package_name: &str,
+    ) -> PackerResult<Package> {
         let url = format!("{}/{}/json", pypi_url, package_name);
         let response = self.client.get(&url).send().await?;
         if !response.status().is_success() {
             return Err(PackerError::RepositoryError(format!(
-                "Failed to fetch PyPI package {}: HTTP {}", 
-                package_name, response.status()
+                "Failed to fetch PyPI package {}: HTTP {}",
+                package_name,
+                response.status()
             )));
         }
         let package_info: serde_json::Value = response.json().await?;
         let info = &package_info["info"];
-        let name = info["name"].as_str()
-            .unwrap_or(package_name)
-            .to_string();
-        let version = info["version"].as_str()
-            .unwrap_or("0.0.0")
-            .to_string();
-        let description = info["summary"].as_str()
-            .unwrap_or("")
-            .to_string();
-        let maintainer = info["maintainer"].as_str()
+        let name = info["name"].as_str().unwrap_or(package_name).to_string();
+        let version = info["version"].as_str().unwrap_or("0.0.0").to_string();
+        let description = info["summary"].as_str().unwrap_or("").to_string();
+        let maintainer = info["maintainer"]
+            .as_str()
             .or_else(|| info["author"].as_str())
             .unwrap_or("unknown")
             .to_string();
-        let license = info["license"].as_str()
-            .unwrap_or("unknown")
-            .to_string();
-        let url = info["home_page"].as_str()
-            .unwrap_or("")
-            .to_string();
+        let license = info["license"].as_str().unwrap_or("unknown").to_string();
+        let url = info["home_page"].as_str().unwrap_or("").to_string();
         let mut size = 0u64;
         if let Some(releases) = package_info["releases"][&version].as_array() {
             if let Some(release) = releases.first() {
@@ -1023,19 +1228,21 @@ impl RepositoryManager {
         let dependencies = info["requires_dist"]
             .as_array()
             .map(|deps| {
-                deps.iter().filter_map(|dep| {
-                    dep.as_str().map(|dep_str| {
-                        let dep_name = dep_str.split_whitespace().next().unwrap_or(dep_str);
-                        Dependency {
-                            name: dep_name.to_string(),
-                            version_req: None,
-                            arch: None,
-                            os: None,
-                            optional: false,
-                            description: None,
-                        }
+                deps.iter()
+                    .filter_map(|dep| {
+                        dep.as_str().map(|dep_str| {
+                            let dep_name = dep_str.split_whitespace().next().unwrap_or(dep_str);
+                            Dependency {
+                                name: dep_name.to_string(),
+                                version_req: None,
+                                arch: None,
+                                os: None,
+                                optional: false,
+                                description: None,
+                            }
+                        })
                     })
-                }).collect()
+                    .collect()
             })
             .unwrap_or_default();
         Ok(Package {
@@ -1072,13 +1279,17 @@ impl RepositoryManager {
     }
     async fn update_debian_repository(&self, name: &str) -> PackerResult<()> {
         info!("Updating Debian repository: {}", name);
-        let repo_config = self.config.get_repository(name)
-            .ok_or_else(|| PackerError::RepositoryError(format!("Repository {} not found ", name)))?;
-        let packages_url = format!("{}/dists/stable/main/binary-amd64/Packages.gz", repo_config.url);
+        let repo_config = self.config.get_repository(name).ok_or_else(|| {
+            PackerError::RepositoryError(format!("Repository {} not found ", name))
+        })?;
+        let packages_url = format!(
+            "{}/dists/stable/main/binary-amd64/Packages.gz",
+            repo_config.url
+        );
         let response = self.client.get(&packages_url).send().await?;
         if !response.status().is_success() {
             return Err(PackerError::RepositoryError(format!(
-                "Failed to download Debian packages list: HTTP {}", 
+                "Failed to download Debian packages list: HTTP {}",
                 response.status()
             )));
         }
@@ -1097,17 +1308,28 @@ impl RepositoryManager {
             repo.last_update = Some(Utc::now());
             repo.metadata.package_count = repo.packages.len();
         }
-        info!("Updated Debian repository with {} packages ", 
-              self.repositories.get(name).map(|r| r.packages.len()).unwrap_or(0));
+        info!(
+            "Updated Debian repository with {} packages ",
+            self.repositories
+                .get(name)
+                .map(|r| r.packages.len())
+                .unwrap_or(0)
+        );
         Ok(())
     }
-    fn parse_debian_packages(&self, content: &str, repository_name: &str) -> PackerResult<Vec<Package>> {
+    fn parse_debian_packages(
+        &self,
+        content: &str,
+        repository_name: &str,
+    ) -> PackerResult<Vec<Package>> {
         let mut packages = Vec::new();
         let mut current_package = HashMap::new();
         for line in content.lines() {
             if line.is_empty() {
                 if !current_package.is_empty() {
-                    if let Ok(package) = self.debian_map_to_package(&current_package, repository_name) {
+                    if let Ok(package) =
+                        self.debian_map_to_package(&current_package, repository_name)
+                    {
                         packages.push(package);
                     }
                     current_package.clear();
@@ -1125,27 +1347,35 @@ impl RepositoryManager {
         }
         Ok(packages)
     }
-    fn debian_map_to_package(&self, package_info: &HashMap<String, String>, repository_name: &str) -> PackerResult<Package> {
-        let name = package_info.get("Package")
+    fn debian_map_to_package(
+        &self,
+        package_info: &HashMap<String, String>,
+        repository_name: &str,
+    ) -> PackerResult<Package> {
+        let name = package_info
+            .get("Package")
             .ok_or_else(|| PackerError::RepositoryError("Package name not found ".to_string()))?
             .clone();
-        let version = package_info.get("Version")
+        let version = package_info
+            .get("Version")
             .ok_or_else(|| PackerError::RepositoryError("Package version not found ".to_string()))?
             .clone();
-        let description = package_info.get("Description")
-            .cloned()
-            .unwrap_or_default();
-        let arch = package_info.get("Architecture")
+        let description = package_info.get("Description").cloned().unwrap_or_default();
+        let arch = package_info
+            .get("Architecture")
             .cloned()
             .unwrap_or_else(|| "amd64".to_string());
-        let size = package_info.get("Size")
+        let size = package_info
+            .get("Size")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
-        let installed_size = package_info.get("Installed-Size")
+        let installed_size = package_info
+            .get("Installed-Size")
             .and_then(|s| s.parse::<u64>().ok())
-            .map(|s| s * 1024) 
+            .map(|s| s * 1024)
             .unwrap_or(0);
-        let dependencies = package_info.get("Depends")
+        let dependencies = package_info
+            .get("Depends")
             .map(|deps| {
                 deps.split(',')
                     .map(|dep| {
@@ -1162,36 +1392,21 @@ impl RepositoryManager {
                     .collect()
             })
             .unwrap_or_default();
-        let conflicts = package_info.get("Conflicts")
-            .map(|conflicts| {
-                conflicts.split(',')
-                    .map(|c| c.trim().to_string())
-                    .collect()
-            })
+        let conflicts = package_info
+            .get("Conflicts")
+            .map(|conflicts| conflicts.split(',').map(|c| c.trim().to_string()).collect())
             .unwrap_or_default();
-        let provides = package_info.get("Provides")
-            .map(|provides| {
-                provides.split(',')
-                    .map(|p| p.trim().to_string())
-                    .collect()
-            })
+        let provides = package_info
+            .get("Provides")
+            .map(|provides| provides.split(',').map(|p| p.trim().to_string()).collect())
             .unwrap_or_default();
-        let replaces = package_info.get("Replaces")
-            .map(|replaces| {
-                replaces.split(',')
-                    .map(|r| r.trim().to_string())
-                    .collect()
-            })
+        let replaces = package_info
+            .get("Replaces")
+            .map(|replaces| replaces.split(',').map(|r| r.trim().to_string()).collect())
             .unwrap_or_default();
-        let maintainer = package_info.get("Maintainer")
-            .cloned()
-            .unwrap_or_default();
-        let url = package_info.get("Homepage")
-            .cloned()
-            .unwrap_or_default();
-        let checksum = package_info.get("SHA256")
-            .cloned()
-            .unwrap_or_default();
+        let maintainer = package_info.get("Maintainer").cloned().unwrap_or_default();
+        let url = package_info.get("Homepage").cloned().unwrap_or_default();
+        let checksum = package_info.get("SHA256").cloned().unwrap_or_default();
         Ok(Package {
             name,
             version,
@@ -1230,13 +1445,14 @@ impl RepositoryManager {
     }
     async fn update_fedora_repository(&self, name: &str) -> PackerResult<()> {
         info!("Updating Fedora repository: {}", name);
-        let repo_config = self.config.get_repository(name)
-            .ok_or_else(|| PackerError::RepositoryError(format!("Repository {} not found ", name)))?;
+        let repo_config = self.config.get_repository(name).ok_or_else(|| {
+            PackerError::RepositoryError(format!("Repository {} not found ", name))
+        })?;
         let repodata_url = format!("{}/repodata/repomd.xml", repo_config.url);
         let response = self.client.get(&repodata_url).send().await?;
         if !response.status().is_success() {
             return Err(PackerError::RepositoryError(format!(
-                "Failed to download Fedora repodata: HTTP {}", 
+                "Failed to download Fedora repodata: HTTP {}",
                 response.status()
             )));
         }
@@ -1245,7 +1461,7 @@ impl RepositoryManager {
         let primary_response = self.client.get(&primary_db_url).send().await?;
         if !primary_response.status().is_success() {
             return Err(PackerError::RepositoryError(format!(
-                "Failed to download Fedora primary database: HTTP {}", 
+                "Failed to download Fedora primary database: HTTP {}",
                 primary_response.status()
             )));
         }
@@ -1269,8 +1485,13 @@ impl RepositoryManager {
             repo.last_update = Some(Utc::now());
             repo.metadata.package_count = repo.packages.len();
         }
-        info!("Updated Fedora repository with {} packages ", 
-              self.repositories.get(name).map(|r| r.packages.len()).unwrap_or(0));
+        info!(
+            "Updated Fedora repository with {} packages ",
+            self.repositories
+                .get(name)
+                .map(|r| r.packages.len())
+                .unwrap_or(0)
+        );
         Ok(())
     }
     fn extract_primary_db_url(&self, repomd_content: &str, base_url: &str) -> PackerResult<String> {
@@ -1285,9 +1506,15 @@ impl RepositoryManager {
                 }
             }
         }
-        Err(PackerError::RepositoryError("Primary database URL not found in repomd.xml".to_string()))
+        Err(PackerError::RepositoryError(
+            "Primary database URL not found in repomd.xml".to_string(),
+        ))
     }
-    fn parse_fedora_primary_xml(&self, content: &str, repository_name: &str) -> PackerResult<Vec<Package>> {
+    fn parse_fedora_primary_xml(
+        &self,
+        content: &str,
+        repository_name: &str,
+    ) -> PackerResult<Vec<Package>> {
         let mut packages = Vec::new();
         let mut current_package = HashMap::new();
         let mut in_package = false;
@@ -1299,7 +1526,9 @@ impl RepositoryManager {
             } else if line == "</package>" {
                 in_package = false;
                 if !current_package.is_empty() {
-                    if let Ok(package) = self.fedora_map_to_package(&current_package, repository_name) {
+                    if let Ok(package) =
+                        self.fedora_map_to_package(&current_package, repository_name)
+                    {
                         packages.push(package);
                     }
                 }
@@ -1342,20 +1571,26 @@ impl RepositoryManager {
         }
         None
     }
-    fn fedora_map_to_package(&self, package_info: &HashMap<String, String>, repository_name: &str) -> PackerResult<Package> {
-        let name = package_info.get("name")
+    fn fedora_map_to_package(
+        &self,
+        package_info: &HashMap<String, String>,
+        repository_name: &str,
+    ) -> PackerResult<Package> {
+        let name = package_info
+            .get("name")
             .ok_or_else(|| PackerError::RepositoryError("Package name not found ".to_string()))?
             .clone();
-        let version = package_info.get("version")
+        let version = package_info
+            .get("version")
             .ok_or_else(|| PackerError::RepositoryError("Package version not found ".to_string()))?
             .clone();
-        let description = package_info.get("summary")
-            .cloned()
-            .unwrap_or_default();
-        let arch = package_info.get("arch")
+        let description = package_info.get("summary").cloned().unwrap_or_default();
+        let arch = package_info
+            .get("arch")
             .cloned()
             .unwrap_or_else(|| "x86_64".to_string());
-        let size = package_info.get("size ")
+        let size = package_info
+            .get("size ")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
         Ok(Package {
@@ -1366,7 +1601,7 @@ impl RepositoryManager {
             arch,
             size,
             installed_size: size,
-            dependencies: Vec::new(), 
+            dependencies: Vec::new(),
             conflicts: Vec::new(),
             provides: Vec::new(),
             replaces: Vec::new(),
@@ -1394,7 +1629,11 @@ impl RepositoryManager {
         info!("Updating custom repository: {}", name);
         self.update_packer_repository(name).await
     }
-    async fn github_repo_to_package(&self, repo_info: serde_json::Value, repository_name: &str) -> PackerResult<Option<Package>> {
+    async fn github_repo_to_package(
+        &self,
+        repo_info: serde_json::Value,
+        repository_name: &str,
+    ) -> PackerResult<Option<Package>> {
         let name = repo_info["name"].as_str().unwrap_or("").to_string();
         let full_name = repo_info["full_name"].as_str().unwrap_or("").to_string();
         let description = repo_info["description"].as_str().unwrap_or("").to_string();
@@ -1409,21 +1648,39 @@ impl RepositoryManager {
         }
         let (owner, repo) = (parts[0], parts[1]);
         let github_client = self.github_client.as_ref().unwrap();
-        let releases = github_client.get_releases(owner, repo).await.unwrap_or_default();
-        let latest_release = releases.into_iter()
+        let releases = github_client
+            .get_releases(owner, repo)
+            .await
+            .unwrap_or_default();
+        let latest_release = releases
+            .into_iter()
             .filter(|r| !r.draft && !r.prerelease)
             .next();
         let (version, _download_url, size) = if let Some(release) = latest_release {
-            let asset = release.assets.iter()
+            let asset = release
+                .assets
+                .iter()
                 .find(|a| a.name.contains("linux") || a.name.contains("x86_64"))
                 .or_else(|| release.assets.first());
             if let Some(asset) = asset {
-                (release.tag_name, asset.browser_download_url.clone(), asset.size)
+                (
+                    release.tag_name,
+                    asset.browser_download_url.clone(),
+                    asset.size,
+                )
             } else {
-                ("0.1.0".to_string(), format!("https://placeholder.example.com"), 0)
+                (
+                    "0.1.0".to_string(),
+                    format!("https://placeholder.example.com"),
+                    0,
+                )
             }
         } else {
-            ("0.1.0".to_string(), format!("https://placeholder.example.com"), 0)
+            (
+                "0.1.0".to_string(),
+                format!("https://placeholder.example.com"),
+                0,
+            )
         };
         let package = Package {
             name,
@@ -1458,13 +1715,22 @@ impl RepositoryManager {
         };
         Ok(Some(package))
     }
-    async fn verify_repository_signature(&self, _index: &RepositoryIndex, _signature: &str, repo_name: &str) -> PackerResult<()> {
-        let repo_config = self.config.get_repository(repo_name)
-            .ok_or_else(|| PackerError::RepositoryError(format!("Repository {} not found ", repo_name)))?;
+    async fn verify_repository_signature(
+        &self,
+        _index: &RepositoryIndex,
+        _signature: &str,
+        repo_name: &str,
+    ) -> PackerResult<()> {
+        let repo_config = self.config.get_repository(repo_name).ok_or_else(|| {
+            PackerError::RepositoryError(format!("Repository {} not found ", repo_name))
+        })?;
         if !self.config.should_verify_signature(repo_config) {
             return Ok(());
         }
-        warn!("Signature verification not yet implemented for repository: {}", repo_name);
+        warn!(
+            "Signature verification not yet implemented for repository: {}",
+            repo_name
+        );
         Ok(())
     }
     async fn convert_metadata_to_package(
@@ -1511,7 +1777,9 @@ impl RepositoryManager {
         })
     }
     pub async fn get_package(&self, name: &str) -> PackerResult<Option<Package>> {
-        let mut repositories: Vec<_> = self.repositories.iter()
+        let mut repositories: Vec<_> = self
+            .repositories
+            .iter()
             .map(|entry| entry.value().clone())
             .collect();
         repositories.sort_by_key(|repo| repo.priority);
@@ -1535,9 +1803,14 @@ impl RepositoryManager {
     async fn discover_package(&self, name: &str) -> PackerResult<Option<Package>> {
         info!("Auto-discovering package: {}", name);
         if let Some(github_client) = &self.github_client {
-            let search_results = github_client.search_repositories(&format!("\"{}\" in:name", name), 5).await?;
+            let search_results = github_client
+                .search_repositories(&format!("\"{}\" in:name", name), 5)
+                .await?;
             for repo_info in search_results {
-                if let Some(package) = self.github_repo_to_package(repo_info, "auto-discovered").await? {
+                if let Some(package) = self
+                    .github_repo_to_package(repo_info, "auto-discovered")
+                    .await?
+                {
                     if package.name.to_lowercase().contains(&name.to_lowercase()) {
                         info!("Auto-discovered package: {} from GitHub", package.name);
                         return Ok(Some(package));
@@ -1551,13 +1824,19 @@ impl RepositoryManager {
         let mut results = Vec::new();
         let mut seen_packages = HashSet::new();
         let query_lower = query.to_lowercase();
-        debug!("Searching for '{}' in {} repositories", query, self.repositories.len());
-        
+        debug!(
+            "Searching for '{}' in {} repositories",
+            query,
+            self.repositories.len()
+        );
+
         debug!("Trying AUR search first");
         match tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            self.search_aur_directly(query, exact)
-        ).await {
+            self.search_aur_directly(query, exact),
+        )
+        .await
+        {
             Ok(Ok(Some(aur_results))) => {
                 debug!("AUR search returned {} results", aur_results.len());
                 for package in aur_results {
@@ -1577,9 +1856,13 @@ impl RepositoryManager {
                 warn!("AUR search timed out");
             }
         }
-        
+
         for repository in self.repositories.iter() {
-            debug!("Repository '{}' has {} packages ", repository.name, repository.packages.len());
+            debug!(
+                "Repository '{}' has {} packages ",
+                repository.name,
+                repository.packages.len()
+            );
             for package in repository.packages.values() {
                 debug!("Checking package '{}'", package.name);
                 let matches = if exact {
@@ -1595,7 +1878,7 @@ impl RepositoryManager {
                 }
             }
         }
-        
+
         if results.is_empty() {
             debug!("No results in cached data, trying system pacman search");
             if let Ok(pacman_results) = self.search_with_pacman(query).await {
@@ -1608,25 +1891,35 @@ impl RepositoryManager {
                 }
             }
         }
-        
+
         results.sort_by(|a, b| {
             let relevance_a = calculate_relevance_score(&a.name, &a.description, query);
             let relevance_b = calculate_relevance_score(&b.name, &b.description, query);
-            let priority_a = self.repositories.get(&a.repository)
+            let priority_a = self
+                .repositories
+                .get(&a.repository)
                 .map(|repo| repo.priority)
-                .unwrap_or(1000); 
-            let priority_b = self.repositories.get(&b.repository)
+                .unwrap_or(1000);
+            let priority_b = self
+                .repositories
+                .get(&b.repository)
                 .map(|repo| repo.priority)
-                .unwrap_or(1000); 
-            relevance_b.partial_cmp(&relevance_a).unwrap_or(std::cmp::Ordering::Equal)
+                .unwrap_or(1000);
+            relevance_b
+                .partial_cmp(&relevance_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
                 .then(priority_a.cmp(&priority_b))
                 .then(a.name.cmp(&b.name))
         });
-        
+
         debug!("Search completed. Found {} packages ", results.len());
         Ok(results)
     }
-    pub async fn search_packages_in_repo(&self, query: &str, repo_name: &str) -> PackerResult<Vec<Package>> {
+    pub async fn search_packages_in_repo(
+        &self,
+        query: &str,
+        repo_name: &str,
+    ) -> PackerResult<Vec<Package>> {
         let mut results = Vec::new();
         let query_lower = query.to_lowercase();
         debug!("Searching for '{}' in repository '{}'", query, repo_name);
@@ -1646,17 +1939,26 @@ impl RepositoryManager {
         results.sort_by(|a, b| {
             let relevance_a = calculate_relevance_score(&a.name, &a.description, query);
             let relevance_b = calculate_relevance_score(&b.name, &b.description, query);
-            relevance_b.partial_cmp(&relevance_a).unwrap_or(std::cmp::Ordering::Equal)
+            relevance_b
+                .partial_cmp(&relevance_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         Ok(results)
     }
-    pub async fn search_aur_directly(&self, query: &str, exact: bool) -> PackerResult<Option<Vec<Package>>> {
+    pub async fn search_aur_directly(
+        &self,
+        query: &str,
+        exact: bool,
+    ) -> PackerResult<Option<Vec<Package>>> {
         info!("Searching AUR directly for: {}", query);
         let _search_type = if exact { "info" } else { "search" };
         let url = if exact {
             format!("https://aur.archlinux.org/rpc/?v=5&type=info&arg={}", query)
         } else {
-            format!("https://aur.archlinux.org/rpc/?v=5&type=search&arg={}", query)
+            format!(
+                "https://aur.archlinux.org/rpc/?v=5&type=search&arg={}",
+                query
+            )
         };
         debug!("AUR search URL: {}", url);
         let timeout_duration = std::time::Duration::from_secs(10);
@@ -1669,25 +1971,39 @@ impl RepositoryManager {
                             if let Some(results) = json["results"].as_array() {
                                 let mut packages = Vec::new();
                                 for result in results {
-                                    let package_name = result["Name"].as_str().unwrap_or("").to_string();
+                                    let package_name =
+                                        result["Name"].as_str().unwrap_or("").to_string();
                                     if package_name.is_empty() {
                                         continue;
                                     }
                                     let matches = if exact {
                                         package_name == query
                                     } else {
-                                        package_name.to_lowercase().contains(&query.to_lowercase()) ||
-                                        result["Description"].as_str().unwrap_or("").to_lowercase().contains(&query.to_lowercase())
+                                        package_name.to_lowercase().contains(&query.to_lowercase())
+                                            || result["Description"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_lowercase()
+                                                .contains(&query.to_lowercase())
                                     };
                                     if !matches {
                                         continue;
                                     }
-                                    let download_size = self.estimate_aur_package_size(result).await;
-                                    let installed_size = self.estimate_aur_installed_size(result, download_size).await;
+                                    let download_size =
+                                        self.estimate_aur_package_size(result).await;
+                                    let installed_size = self
+                                        .estimate_aur_installed_size(result, download_size)
+                                        .await;
                                     let package = Package {
                                         name: package_name,
-                                        version: result["Version"].as_str().unwrap_or("unknown").to_string(),
-                                        description: result["Description"].as_str().unwrap_or("").to_string(),
+                                        version: result["Version"]
+                                            .as_str()
+                                            .unwrap_or("unknown")
+                                            .to_string(),
+                                        description: result["Description"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .to_string(),
                                         repository: "aur".to_string(),
                                         arch: "any".to_string(),
                                         size: download_size,
@@ -1696,7 +2012,10 @@ impl RepositoryManager {
                                         conflicts: Vec::new(),
                                         provides: Vec::new(),
                                         replaces: Vec::new(),
-                                        maintainer: result["Maintainer"].as_str().unwrap_or("").to_string(),
+                                        maintainer: result["Maintainer"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .to_string(),
                                         license: "unknown".to_string(),
                                         url: result["URL"].as_str().unwrap_or("").to_string(),
                                         checksum: String::new(),
@@ -1717,7 +2036,11 @@ impl RepositoryManager {
                                     };
                                     packages.push(package);
                                 }
-                                info!("Found {} packages in AUR for query '{}'", packages.len(), query);
+                                info!(
+                                    "Found {} packages in AUR for query '{}'",
+                                    packages.len(),
+                                    query
+                                );
                                 return Ok(Some(packages));
                             } else {
                                 debug!("No results array in AUR response");
@@ -1744,49 +2067,51 @@ impl RepositoryManager {
             }
         }
     }
-    
+
     async fn search_with_pacman(&self, query: &str) -> PackerResult<Vec<Package>> {
         info!("Searching with system pacman for: {}", query);
         use tokio::process::Command;
-        
+
         let output = Command::new("pacman")
             .arg("-Ss")
             .arg(query)
             .output()
             .await?;
-            
+
         if !output.status.success() {
             warn!("Pacman search failed");
             return Ok(Vec::new());
         }
-        
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut packages = Vec::new();
         let mut lines = stdout.lines();
-        
+
         while let Some(line) = lines.next() {
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             if let Some(space_pos) = line.find(' ') {
                 let name_part = &line[..space_pos];
                 let rest = &line[space_pos..].trim();
-                
+
                 if let Some(slash_pos) = name_part.find('/') {
                     let repo_name = &name_part[..slash_pos];
                     let package_name = &name_part[slash_pos + 1..];
-                    
+
                     let version = if let Some(bracket_pos) = rest.find('[') {
                         rest[..bracket_pos].trim()
                     } else {
                         rest.trim()
-                    }.to_string();
-                    
-                    let description = lines.next()
+                    }
+                    .to_string();
+
+                    let description = lines
+                        .next()
                         .map(|desc_line| desc_line.trim().to_string())
                         .unwrap_or_default();
-                    
+
                     let package = Package {
                         name: package_name.to_string(),
                         version,
@@ -1822,17 +2147,25 @@ impl RepositoryManager {
                 }
             }
         }
-        
+
         info!("Found {} packages via pacman search", packages.len());
         Ok(packages)
     }
     pub async fn get_newer_version(&self, package: &Package) -> PackerResult<Option<Package>> {
         if let Some(repo_package) = self.get_package(&package.name).await? {
             use semver::Version;
-            let current_version = Version::parse(&package.version)
-                .map_err(|e| PackerError::InvalidVersion(format!("Invalid current version {}: {}", package.version, e)))?;
-            let repo_version = Version::parse(&repo_package.version)
-                .map_err(|e| PackerError::InvalidVersion(format!("Invalid repo version {}: {}", repo_package.version, e)))?;
+            let current_version = Version::parse(&package.version).map_err(|e| {
+                PackerError::InvalidVersion(format!(
+                    "Invalid current version {}: {}",
+                    package.version, e
+                ))
+            })?;
+            let repo_version = Version::parse(&repo_package.version).map_err(|e| {
+                PackerError::InvalidVersion(format!(
+                    "Invalid repo version {}: {}",
+                    repo_package.version, e
+                ))
+            })?;
             if repo_version > current_version {
                 Ok(Some(repo_package))
             } else {
@@ -1842,16 +2175,21 @@ impl RepositoryManager {
             Ok(None)
         }
     }
-    pub async fn download_package(&self, package: &Package, progress_bar: &ProgressBar) -> PackerResult<PathBuf> {
-        let cache_file = self.cache_dir.join(format!("{}-{}.pkg", package.name, package.version));
+    pub async fn download_package(
+        &self,
+        package: &Package,
+        progress_bar: &ProgressBar,
+    ) -> PackerResult<PathBuf> {
+        let cache_file = self
+            .cache_dir
+            .join(format!("{}-{}.pkg", package.name, package.version));
         if cache_file.exists() && self.verify_cached_package(&cache_file, package).await? {
             debug!("Package {} already cached and verified", package.name);
             return Ok(cache_file);
         }
-        let repository = self
-            .repositories
-            .get(&package.repository)
-            .ok_or_else(|| PackerError::RepositoryError(format!("Repository {} not found ", package.repository)))?;
+        let repository = self.repositories.get(&package.repository).ok_or_else(|| {
+            PackerError::RepositoryError(format!("Repository {} not found ", package.repository))
+        })?;
         let download_url = self.resolve_download_url(package, &repository).await?;
         info!("Downloading package {} from {}", package.name, download_url);
         progress_bar.set_message(format!("Downloading {}", package.name));
@@ -1859,18 +2197,30 @@ impl RepositoryManager {
         let max_attempts = self.config.retry_attempts;
         loop {
             attempts += 1;
-            match self.download_file_with_resume(&download_url, &cache_file, progress_bar).await {
+            match self
+                .download_file_with_resume(&download_url, &cache_file, progress_bar)
+                .await
+            {
                 Ok(_) => {
                     if self.verify_package_integrity(&cache_file, package).await? {
-                        info!("Successfully downloaded and verified package {}", package.name);
+                        info!(
+                            "Successfully downloaded and verified package {}",
+                            package.name
+                        );
                         return Ok(cache_file);
                     } else {
-                        warn!("Package {} failed integrity check, retrying...", package.name);
+                        warn!(
+                            "Package {} failed integrity check, retrying...",
+                            package.name
+                        );
                         let _ = fs::remove_file(&cache_file).await;
                     }
                 }
                 Err(e) => {
-                    warn!("Download attempt {} failed for {}: {}", attempts, package.name, e);
+                    warn!(
+                        "Download attempt {} failed for {}: {}",
+                        attempts, package.name, e
+                    );
                 }
             }
             if attempts >= max_attempts {
@@ -1882,22 +2232,41 @@ impl RepositoryManager {
             sleep(Duration::from_secs(self.config.retry_delay_seconds)).await;
         }
     }
-    async fn resolve_download_url(&self, package: &Package, repository: &Repository) -> PackerResult<String> {
+    async fn resolve_download_url(
+        &self,
+        package: &Package,
+        repository: &Repository,
+    ) -> PackerResult<String> {
         match repository.repo_type {
-            RepositoryType::AUR => {
-                Ok(format!("https://aur.archlinux.org/cgit/aur.git/snapshot/{}.tar.gz", package.name))
-            }
+            RepositoryType::AUR => Ok(format!(
+                "https://aur.archlinux.org/cgit/aur.git/snapshot/{}.tar.gz",
+                package.name
+            )),
             RepositoryType::GitHub => {
                 if package.url.contains("github.com") {
-                    Ok(format!("{}/archive/{}.tar.gz", package.url, package.version))
+                    Ok(format!(
+                        "{}/archive/{}.tar.gz",
+                        package.url, package.version
+                    ))
                 } else {
-                    Ok(format!("{}/packages/{}-{}.pkg", repository.url, package.name, package.version))
+                    Ok(format!(
+                        "{}/packages/{}-{}.pkg",
+                        repository.url, package.name, package.version
+                    ))
                 }
             }
-            _ => Ok(format!("{}/packages/{}-{}.pkg", repository.url, package.name, package.version))
+            _ => Ok(format!(
+                "{}/packages/{}-{}.pkg",
+                repository.url, package.name, package.version
+            )),
         }
     }
-    async fn download_file_with_resume(&self, url: &str, path: &PathBuf, progress_bar: &ProgressBar) -> PackerResult<()> {
+    async fn download_file_with_resume(
+        &self,
+        url: &str,
+        path: &PathBuf,
+        progress_bar: &ProgressBar,
+    ) -> PackerResult<()> {
         let mut file_size = 0u64;
         if path.exists() {
             file_size = fs::metadata(path).await?.len();
@@ -1907,7 +2276,9 @@ impl RepositoryManager {
             request = request.header("Range", format!("bytes={}-", file_size));
         }
         let response = request.send().await?;
-        if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        if !response.status().is_success()
+            && response.status() != reqwest::StatusCode::PARTIAL_CONTENT
+        {
             return Err(PackerError::DownloadFailed(format!(
                 "HTTP error: {}",
                 response.status()
@@ -1942,7 +2313,7 @@ impl RepositoryManager {
                 progress_bar.inc(chunk.len() as u64);
             } else {
                 progress_bar.set_position(downloaded_bytes);
-                progress_bar.set_length(downloaded_bytes.max(1)); 
+                progress_bar.set_length(downloaded_bytes.max(1));
             }
         }
         file.flush().await?;
@@ -1958,7 +2329,11 @@ impl RepositoryManager {
         }
         Ok(true)
     }
-    async fn verify_package_integrity(&self, path: &PathBuf, package: &Package) -> PackerResult<bool> {
+    async fn verify_package_integrity(
+        &self,
+        path: &PathBuf,
+        package: &Package,
+    ) -> PackerResult<bool> {
         if package.checksum.is_empty() {
             return Ok(true);
         }
@@ -2068,7 +2443,11 @@ impl RepositoryManager {
         self.repositories.remove(name);
         Ok(())
     }
-    pub async fn update_repository(&mut self, repository_name: &str, _force: bool) -> PackerResult<()> {
+    pub async fn update_repository(
+        &mut self,
+        repository_name: &str,
+        _force: bool,
+    ) -> PackerResult<()> {
         if let Some(repo) = self.repositories.get(repository_name) {
             match repo.repo_type {
                 RepositoryType::Packer => self.update_packer_repository(repository_name).await,
@@ -2078,7 +2457,10 @@ impl RepositoryManager {
                 _ => Ok(()),
             }
         } else {
-            Err(PackerError::RepositoryError(format!("Repository {} not found ", repository_name)))
+            Err(PackerError::RepositoryError(format!(
+                "Repository {} not found ",
+                repository_name
+            )))
         }
     }
     pub async fn check_repository_health(&self, repo_name: &str) -> PackerResult<RepositoryHealth> {
@@ -2134,31 +2516,44 @@ impl RepositoryManager {
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(PackerError::RepositorySyncFailed(format!("HTTP {}", response.status())))
+            Err(PackerError::RepositorySyncFailed(format!(
+                "HTTP {}",
+                response.status()
+            )))
         }
     }
 
     pub async fn find_alternatives(&self, package_name: &str) -> PackerResult<Vec<String>> {
         let mut alternatives = Vec::new();
-        
+
         for repository in self.repositories.iter() {
-            if let Ok(packages) = self.search_packages_in_repo(package_name, &repository.key()).await {
+            if let Ok(packages) = self
+                .search_packages_in_repo(package_name, &repository.key())
+                .await
+            {
                 for package in packages {
-                    if package.provides.iter().any(|p| p.contains(package_name)) ||
-                       package.name.contains(package_name) {
+                    if package.provides.iter().any(|p| p.contains(package_name))
+                        || package.name.contains(package_name)
+                    {
                         alternatives.push(package.name);
                     }
                 }
             }
         }
-        
+
         Ok(alternatives)
     }
 
     pub async fn find_package(&self, name: &str, exact: bool) -> PackerResult<Option<Package>> {
         for repository in self.repositories.iter() {
             if let Ok(packages) = self.search_packages_in_repo(name, &repository.key()).await {
-                if let Some(package) = packages.into_iter().find(|p| if exact { p.name == name } else { p.name.contains(name) }) {
+                if let Some(package) = packages.into_iter().find(|p| {
+                    if exact {
+                        p.name == name
+                    } else {
+                        p.name.contains(name)
+                    }
+                }) {
                     return Ok(Some(package));
                 }
             }
@@ -2168,10 +2563,10 @@ impl RepositoryManager {
 
     pub async fn get_package_versions(&self, _package_name: &str) -> PackerResult<Vec<String>> {
         let mut versions = Vec::new();
-        
+
         // for now, return a placeholder version
         versions.push("1.0.0".to_string());
-        
+
         Ok(versions)
     }
 }
@@ -2215,22 +2610,20 @@ fn calculate_relevance_score(name: &str, description: &str, query: &str) -> f32 
     let name_lower = name.to_lowercase();
     let description_lower = description.to_lowercase();
     let query_lower = query.to_lowercase();
-    
+
     if name_lower == query_lower {
         score += 100.0;
-    } 
-    else if name_lower.starts_with(&query_lower) {
+    } else if name_lower.starts_with(&query_lower) {
         score += 80.0;
-    } 
-    else if name_lower.contains(&query_lower) {
+    } else if name_lower.contains(&query_lower) {
         score += 60.0;
     }
-    
+
     if name_lower != query_lower {
         let query_parts: Vec<&str> = query_lower.split(&['-', '_', ' '][..]).collect();
         let name_parts: Vec<&str> = name_lower.split(&['-', '_', ' '][..]).collect();
         for query_part in &query_parts {
-            if query_part.len() > 2 { 
+            if query_part.len() > 2 {
                 for name_part in &name_parts {
                     if name_part == query_part {
                         score += 40.0;
@@ -2243,7 +2636,7 @@ fn calculate_relevance_score(name: &str, description: &str, query: &str) -> f32 
             }
         }
     }
-    
+
     if description_lower.contains(&query_lower) {
         let query_len = query_lower.len();
         let desc_len = description_lower.len();
@@ -2253,7 +2646,7 @@ fn calculate_relevance_score(name: &str, description: &str, query: &str) -> f32 
             score += 10.0;
         }
     }
-    
+
     match name_lower.as_str() {
         "git" => score += 15.0,
         "neofetch" => score += 15.0,
@@ -2262,14 +2655,14 @@ fn calculate_relevance_score(name: &str, description: &str, query: &str) -> f32 
         name if name.contains("discord") || name.contains("spotify") => score += 6.0,
         _ => {}
     }
-    
+
     if name.len() > 30 {
         score -= 5.0;
     }
-    
+
     if description.is_empty() || description.len() < 10 {
         score -= 2.0;
     }
-    
-    score.max(0.0) 
+
+    score.max(0.0)
 }

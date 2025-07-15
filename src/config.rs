@@ -214,28 +214,28 @@ pub enum CompressionFormat {
 pub struct SecurityPolicy {
     #[serde(default = "default_require_signatures")]
     pub require_signatures: bool,
-    
+
     #[serde(default = "default_allow_untrusted_repos")]
     pub allow_untrusted_repos: bool,
-    
+
     #[serde(default = "default_scan_for_vulnerabilities")]
     pub scan_for_vulnerabilities: bool,
-    
+
     #[serde(default = "default_block_high_risk")]
     pub block_high_risk_packages: bool,
-    
+
     #[serde(default = "default_quarantine_duration")]
     pub quarantine_duration_hours: u64,
-    
+
     #[serde(default = "default_max_package_size")]
     pub max_package_size_mb: u64,
-    
+
     #[serde(default = "default_allowed_protocols")]
     pub allowed_protocols: Vec<String>,
-    
+
     #[serde(default)]
     pub sandbox_builds: bool,
-    
+
     #[serde(default)]
     pub verify_build_reproducibility: bool,
 }
@@ -244,16 +244,16 @@ pub struct SecurityPolicy {
 pub struct GPGConfig {
     #[serde(default)]
     pub keyring_path: Option<String>,
-    
+
     #[serde(default)]
     pub trusted_keyservers: Vec<String>,
-    
+
     #[serde(default)]
     pub auto_import_keys: bool,
-    
+
     #[serde(default = "default_key_trust_threshold")]
     pub minimum_trust_level: String,
-    
+
     #[serde(default = "default_signature_algorithms")]
     pub allowed_signature_algorithms: Vec<String>,
 }
@@ -306,10 +306,7 @@ impl Config {
     }
 
     pub fn get_enabled_repositories(&self) -> Vec<&RepositoryConfig> {
-        self.repositories
-            .iter()
-            .filter(|r| r.enabled)
-            .collect()
+        self.repositories.iter().filter(|r| r.enabled).collect()
     }
 
     pub fn get_repositories_by_priority(&self) -> Vec<&RepositoryConfig> {
@@ -321,7 +318,9 @@ impl Config {
     pub fn get_trusted_repositories(&self) -> Vec<&RepositoryConfig> {
         self.repositories
             .iter()
-            .filter(|r| r.enabled && matches!(r.trust_level, TrustLevel::Trusted | TrustLevel::Verified))
+            .filter(|r| {
+                r.enabled && matches!(r.trust_level, TrustLevel::Trusted | TrustLevel::Verified)
+            })
             .collect()
     }
 
@@ -435,19 +434,17 @@ impl Default for RepositoryConfig {
 }
 
 fn default_repositories() -> Vec<RepositoryConfig> {
-    vec![
-        RepositoryConfig {
-            name: "aur".to_string(),
-            url: "https://aur.archlinux.org/".to_string(),
-            enabled: true,
-            priority: 1,
-            repo_type: RepositoryType::AUR,
-            trust_level: TrustLevel::Community,
-            mirror_urls: vec!["https://aur.archlinux.org/".to_string()],
-            arch: Some("any".to_string()),
-            siglevel: Some("Never".to_string()),
-        },
-    ]
+    vec![RepositoryConfig {
+        name: "aur".to_string(),
+        url: "https://aur.archlinux.org/".to_string(),
+        enabled: true,
+        priority: 1,
+        repo_type: RepositoryType::AUR,
+        trust_level: TrustLevel::Community,
+        mirror_urls: vec!["https://aur.archlinux.org/".to_string()],
+        arch: Some("any".to_string()),
+        siglevel: Some("Never".to_string()),
+    }]
 }
 
 fn default_install_root() -> PathBuf {
@@ -501,10 +498,7 @@ fn default_max_package_size() -> u64 {
 }
 
 fn default_allowed_protocols() -> Vec<String> {
-    vec![
-        "https".to_string(),
-        "ssh".to_string(),
-    ]
+    vec!["https".to_string(), "ssh".to_string()]
 }
 
 fn default_key_trust_threshold() -> String {
@@ -512,11 +506,7 @@ fn default_key_trust_threshold() -> String {
 }
 
 fn default_signature_algorithms() -> Vec<String> {
-    vec![
-        "RSA".to_string(),
-        "ECDSA".to_string(),
-        "EdDSA".to_string(),
-    ]
+    vec!["RSA".to_string(), "ECDSA".to_string(), "EdDSA".to_string()]
 }
 
 fn default_timeout_seconds() -> u64 {
@@ -564,7 +554,12 @@ fn default_https_proxy() -> Option<String> {
 }
 
 fn default_user_agent() -> String {
-    format!("packer/{} ({}; {})", crate::PACKER_VERSION, std::env::consts::OS, std::env::consts::ARCH)
+    format!(
+        "packer/{} ({}; {})",
+        crate::PACKER_VERSION,
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
 }
 
 fn default_arch() -> String {
@@ -589,4 +584,4 @@ fn default_auto_discover() -> bool {
 
 fn default_security_level() -> SecurityLevel {
     SecurityLevel::Permissive
-} 
+}

@@ -1,16 +1,12 @@
-use crate::{
-    error::PackerResult,
-    package::Package,
-    config::Config,
-};
+use crate::{config::Config, error::PackerResult, package::Package};
+use futures::future::join_all;
+use log::{debug, error, info};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Semaphore, RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::JoinHandle;
-use futures::future::join_all;
-use log::{info, debug, error};
-use serde::{Deserialize, Serialize};
 
 /// Advanced parallel operations manager
 #[derive(Debug)]
@@ -223,7 +219,7 @@ impl ParallelOperationsManager {
     pub fn new(config: Config) -> Self {
         let max_downloads = config.max_parallel_downloads;
         let max_installs = config.parallel_installs;
-        
+
         Self {
             config: config.clone(),
             download_semaphore: Arc::new(Semaphore::new(max_downloads)),
@@ -235,71 +231,81 @@ impl ParallelOperationsManager {
             active_operations: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     pub async fn execute_parallel_operations(
         &self,
         tasks: Vec<ParallelTask>,
     ) -> PackerResult<Vec<TaskResult>> {
         info!("Starting parallel execution of {} tasks", tasks.len());
-        
+
         self.update_resource_metrics().await?;
-        
+
         let optimized_tasks = self.optimize_task_scheduling(tasks).await?;
-        
+
         let results = self.execute_scheduled_tasks(optimized_tasks).await?;
-        
+
         self.update_performance_metrics(&results).await?;
-        
+
         self.generate_optimization_suggestions().await?;
-        
+
         info!("Parallel operations completed successfully");
         Ok(results)
     }
-    
-    async fn optimize_task_scheduling(&self, mut tasks: Vec<ParallelTask>) -> PackerResult<Vec<ParallelTask>> {
+
+    async fn optimize_task_scheduling(
+        &self,
+        mut tasks: Vec<ParallelTask>,
+    ) -> PackerResult<Vec<ParallelTask>> {
         let scheduler = self.task_scheduler.read().await;
         let resource_monitor = self.resource_monitor.read().await;
-        
+
         tasks.sort_by(|a, b| {
-            a.priority.cmp(&b.priority)
+            a.priority
+                .cmp(&b.priority)
                 .then_with(|| a.estimated_duration.cmp(&b.estimated_duration))
         });
-        
+
         let optimized_tasks = match scheduler.scheduling_algorithm {
             SchedulingAlgorithm::ResourceAware => {
-                self.apply_resource_aware_scheduling(tasks, &resource_monitor).await?
+                self.apply_resource_aware_scheduling(tasks, &resource_monitor)
+                    .await?
             }
             SchedulingAlgorithm::AdaptiveHybrid => {
-                self.apply_adaptive_scheduling(tasks, &resource_monitor).await?
+                self.apply_adaptive_scheduling(tasks, &resource_monitor)
+                    .await?
             }
             SchedulingAlgorithm::DeadlineAware => {
                 self.apply_deadline_aware_scheduling(tasks).await?
             }
             _ => tasks,
         };
-        
+
         debug!("Task scheduling optimization completed");
         Ok(optimized_tasks)
     }
-    
-    async fn execute_scheduled_tasks(&self, tasks: Vec<ParallelTask>) -> PackerResult<Vec<TaskResult>> {
+
+    async fn execute_scheduled_tasks(
+        &self,
+        tasks: Vec<ParallelTask>,
+    ) -> PackerResult<Vec<TaskResult>> {
         let mut _task_handles: Vec<JoinHandle<TaskResult>> = Vec::new();
         let mut batch_results = Vec::new();
-        
+
         let batch_size = self.calculate_optimal_batch_size().await;
-        
+
         for batch in tasks.chunks(batch_size) {
-            let batch_handles: Vec<_> = batch.iter().map(|task| {
-                let task_clone = task.clone();
-                let manager_ref = self.clone_refs();
-                
-                tokio::spawn(async move {
-                    manager_ref.execute_single_task(task_clone).await
+            let batch_handles: Vec<_> = batch
+                .iter()
+                .map(|task| {
+                    let task_clone = task.clone();
+                    let manager_ref = self.clone_refs();
+
+                    tokio::spawn(async move { manager_ref.execute_single_task(task_clone).await })
                 })
-            }).collect();
-            
+                .collect();
+
             let batch_results_chunk = join_all(batch_handles).await;
-            
+
             for result in batch_results_chunk {
                 match result {
                     Ok(task_result) => batch_results.push(task_result),
@@ -321,14 +327,14 @@ impl ParallelOperationsManager {
                 tokio::time::sleep(delay).await;
             }
         }
-        
+
         Ok(batch_results)
     }
-    
+
     async fn execute_single_task(&self, task: ParallelTask) -> TaskResult {
         let start_time = Instant::now();
         let task_id = task.task_id.clone();
-        
+
         let operation_context = OperationContext {
             operation_id: task_id.clone(),
             start_time,
@@ -339,21 +345,22 @@ impl ParallelOperationsManager {
             dependencies_met: false,
             can_be_cancelled: true,
         };
-        
-        self.active_operations.write().await.insert(task_id.clone(), operation_context);
-        
+
+        self.active_operations
+            .write()
+            .await
+            .insert(task_id.clone(), operation_context);
+
         let resource_result = self.acquire_task_resources(&task).await;
-        
+
         let result = match resource_result {
-            Ok(_) => {
-                match task.task_type {
-                    TaskType::PackageDownload => self.execute_download_task(&task).await,
-                    TaskType::PackageInstall => self.execute_install_task(&task).await,
-                    TaskType::SecurityScan => self.execute_security_scan_task(&task).await,
-                    TaskType::DependencyResolution => self.execute_dependency_task(&task).await,
-                    _ => self.execute_generic_task(&task).await,
-                }
-            }
+            Ok(_) => match task.task_type {
+                TaskType::PackageDownload => self.execute_download_task(&task).await,
+                TaskType::PackageInstall => self.execute_install_task(&task).await,
+                TaskType::SecurityScan => self.execute_security_scan_task(&task).await,
+                TaskType::DependencyResolution => self.execute_dependency_task(&task).await,
+                _ => self.execute_generic_task(&task).await,
+            },
             Err(e) => TaskResult {
                 task_id: task_id.clone(),
                 success: false,
@@ -362,75 +369,115 @@ impl ParallelOperationsManager {
                 resource_usage: ResourceUsage::default(),
             },
         };
-        
+
         self.release_task_resources(&task).await;
-        
+
         self.active_operations.write().await.remove(&task_id);
-        
+
         result
     }
-    
+
     async fn apply_resource_aware_scheduling(
         &self,
         mut tasks: Vec<ParallelTask>,
         resource_monitor: &ResourceMonitor,
     ) -> PackerResult<Vec<ParallelTask>> {
         tasks.sort_by(|a, b| {
-            let a_score = self.calculate_resource_compatibility_score(&a.resource_requirement, resource_monitor);
-            let b_score = self.calculate_resource_compatibility_score(&b.resource_requirement, resource_monitor);
-            b_score.partial_cmp(&a_score).unwrap_or(std::cmp::Ordering::Equal)
+            let a_score = self
+                .calculate_resource_compatibility_score(&a.resource_requirement, resource_monitor);
+            let b_score = self
+                .calculate_resource_compatibility_score(&b.resource_requirement, resource_monitor);
+            b_score
+                .partial_cmp(&a_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
-        
+
         Ok(tasks)
     }
-    
+
     async fn apply_adaptive_scheduling(
         &self,
         tasks: Vec<ParallelTask>,
         resource_monitor: &ResourceMonitor,
     ) -> PackerResult<Vec<ParallelTask>> {
         let performance_metrics = self.performance_metrics.read().await;
-        
+
         if performance_metrics.parallelization_effectiveness < 0.7 {
             self.apply_conservative_scheduling(tasks).await
         } else if resource_monitor.cpu_usage > 80.0 {
             self.apply_io_optimized_scheduling(tasks).await
         } else {
-            self.apply_resource_aware_scheduling(tasks, resource_monitor).await
+            self.apply_resource_aware_scheduling(tasks, resource_monitor)
+                .await
         }
     }
-    
-    async fn apply_deadline_aware_scheduling(&self, mut tasks: Vec<ParallelTask>) -> PackerResult<Vec<ParallelTask>> {
+
+    async fn apply_deadline_aware_scheduling(
+        &self,
+        mut tasks: Vec<ParallelTask>,
+    ) -> PackerResult<Vec<ParallelTask>> {
         tasks.sort_by(|a, b| {
             let a_urgency = self.calculate_task_urgency(a);
             let b_urgency = self.calculate_task_urgency(b);
-            b_urgency.partial_cmp(&a_urgency).unwrap_or(std::cmp::Ordering::Equal)
+            b_urgency
+                .partial_cmp(&a_urgency)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         Ok(tasks)
     }
-    
-    async fn apply_conservative_scheduling(&self, tasks: Vec<ParallelTask>) -> PackerResult<Vec<ParallelTask>> {
+
+    async fn apply_conservative_scheduling(
+        &self,
+        tasks: Vec<ParallelTask>,
+    ) -> PackerResult<Vec<ParallelTask>> {
         Ok(tasks)
     }
-    
-    async fn apply_io_optimized_scheduling(&self, mut tasks: Vec<ParallelTask>) -> PackerResult<Vec<ParallelTask>> {
+
+    async fn apply_io_optimized_scheduling(
+        &self,
+        mut tasks: Vec<ParallelTask>,
+    ) -> PackerResult<Vec<ParallelTask>> {
         tasks.sort_by(|a, b| {
-            let a_io_intensity = a.resource_requirement.disk_io_mb_per_sec + a.resource_requirement.network_mb_per_sec;
-            let b_io_intensity = b.resource_requirement.disk_io_mb_per_sec + b.resource_requirement.network_mb_per_sec;
-            b_io_intensity.partial_cmp(&a_io_intensity).unwrap_or(std::cmp::Ordering::Equal)
+            let a_io_intensity = a.resource_requirement.disk_io_mb_per_sec
+                + a.resource_requirement.network_mb_per_sec;
+            let b_io_intensity = b.resource_requirement.disk_io_mb_per_sec
+                + b.resource_requirement.network_mb_per_sec;
+            b_io_intensity
+                .partial_cmp(&a_io_intensity)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         Ok(tasks)
     }
-    
-    fn calculate_resource_compatibility_score(&self, requirement: &ResourceRequirement, monitor: &ResourceMonitor) -> f64 {
-        let cpu_score = if requirement.cpu_cores <= monitor.available_cores as f64 { 1.0 } else { 0.0 };
-        let memory_score = if requirement.memory_mb <= monitor.available_memory_mb { 1.0 } else { 0.0 };
-        let io_score = if requirement.disk_io_mb_per_sec <= 100.0 { 1.0 } else { 0.5 };
-        let network_score = if requirement.network_mb_per_sec <= monitor.network_speed_mbps { 1.0 } else { 0.5 };
-        
+
+    fn calculate_resource_compatibility_score(
+        &self,
+        requirement: &ResourceRequirement,
+        monitor: &ResourceMonitor,
+    ) -> f64 {
+        let cpu_score = if requirement.cpu_cores <= monitor.available_cores as f64 {
+            1.0
+        } else {
+            0.0
+        };
+        let memory_score = if requirement.memory_mb <= monitor.available_memory_mb {
+            1.0
+        } else {
+            0.0
+        };
+        let io_score = if requirement.disk_io_mb_per_sec <= 100.0 {
+            1.0
+        } else {
+            0.5
+        };
+        let network_score = if requirement.network_mb_per_sec <= monitor.network_speed_mbps {
+            1.0
+        } else {
+            0.5
+        };
+
         (cpu_score + memory_score + io_score + network_score) / 4.0
     }
-    
+
     fn calculate_task_urgency(&self, task: &ParallelTask) -> f64 {
         let age = task.created_at.elapsed().as_secs_f64();
         let priority_weight = match task.priority {
@@ -440,85 +487,90 @@ impl ParallelOperationsManager {
             TaskPriority::Low => 1.0,
             TaskPriority::Background => 0.1,
         };
-        
+
         age * priority_weight
     }
-    
+
     async fn update_resource_metrics(&self) -> PackerResult<()> {
         let mut monitor = self.resource_monitor.write().await;
-        
+
         monitor.cpu_usage = self.get_cpu_usage().await;
         monitor.memory_usage = self.get_memory_usage().await;
         monitor.disk_io_usage = self.get_disk_io_usage().await;
         monitor.network_bandwidth_usage = self.get_network_usage().await;
-        
+
         debug!("Resource metrics updated");
         Ok(())
     }
-    
+
     async fn update_performance_metrics(&self, results: &[TaskResult]) -> PackerResult<()> {
         let mut metrics = self.performance_metrics.write().await;
-        
+
         let successful_tasks = results.iter().filter(|r| r.success).count() as u64;
         let failed_tasks = results.iter().filter(|r| !r.success).count() as u64;
-        
+
         metrics.operations_completed += successful_tasks;
         metrics.operations_failed += failed_tasks;
-        
+
         let total_time: Duration = results.iter().map(|r| r.execution_time).sum();
         metrics.total_processing_time += total_time;
-        
+
         if !results.is_empty() {
             metrics.average_task_time = total_time / results.len() as u32;
             metrics.throughput_ops_per_second = results.len() as f64 / total_time.as_secs_f64();
         }
-        
+
         debug!("Performance metrics updated");
         Ok(())
     }
-    
+
     async fn generate_optimization_suggestions(&self) -> PackerResult<()> {
         let mut metrics = self.performance_metrics.write().await;
         let resource_monitor = self.resource_monitor.read().await;
-        
+
         metrics.optimization_suggestions.clear();
-        
+
         if metrics.parallelization_effectiveness < 0.5 {
-            metrics.optimization_suggestions.push(OptimizationSuggestion {
-                suggestion_type: OptimizationType::DecreaseParallelism,
-                description: "Consider reducing parallel task count due to low effectiveness".to_string(),
-                expected_improvement: 0.3,
-                implementation_cost: ImplementationCost::Free,
-                priority: SuggestionPriority::Important,
-            });
+            metrics
+                .optimization_suggestions
+                .push(OptimizationSuggestion {
+                    suggestion_type: OptimizationType::DecreaseParallelism,
+                    description: "Consider reducing parallel task count due to low effectiveness"
+                        .to_string(),
+                    expected_improvement: 0.3,
+                    implementation_cost: ImplementationCost::Free,
+                    priority: SuggestionPriority::Important,
+                });
         }
-        
+
         if resource_monitor.cpu_usage > 90.0 {
-            metrics.optimization_suggestions.push(OptimizationSuggestion {
-                suggestion_type: OptimizationType::OptimizeResourceAllocation,
-                description: "CPU usage is very high, consider task prioritization".to_string(),
-                expected_improvement: 0.4,
-                implementation_cost: ImplementationCost::Low,
-                priority: SuggestionPriority::Critical,
-            });
+            metrics
+                .optimization_suggestions
+                .push(OptimizationSuggestion {
+                    suggestion_type: OptimizationType::OptimizeResourceAllocation,
+                    description: "CPU usage is very high, consider task prioritization".to_string(),
+                    expected_improvement: 0.4,
+                    implementation_cost: ImplementationCost::Low,
+                    priority: SuggestionPriority::Critical,
+                });
         }
-        
+
         Ok(())
     }
-    
+
     // Helper methods and implementations will be added here later on
     // For simplicity, I'll provide stub implementations
-    
+
     fn clone_refs(&self) -> ParallelOperationsManagerRef {
         ParallelOperationsManagerRef {
             resource_monitor: Arc::clone(&self.resource_monitor),
             performance_metrics: Arc::clone(&self.performance_metrics),
         }
     }
-    
+
     async fn calculate_optimal_batch_size(&self) -> usize {
         let resource_monitor = self.resource_monitor.read().await;
-        
+
         if resource_monitor.cpu_usage > 80.0 {
             2
         } else if resource_monitor.memory_usage > 80.0 {
@@ -527,10 +579,10 @@ impl ParallelOperationsManager {
             5
         }
     }
-    
+
     async fn calculate_inter_batch_delay(&self) -> Duration {
         let resource_monitor = self.resource_monitor.read().await;
-        
+
         if resource_monitor.cpu_usage > 90.0 {
             Duration::from_millis(500)
         } else if resource_monitor.cpu_usage > 70.0 {
@@ -539,7 +591,7 @@ impl ParallelOperationsManager {
             Duration::from_millis(0)
         }
     }
-    
+
     async fn acquire_task_resources(&self, task: &ParallelTask) -> PackerResult<()> {
         match task.task_type {
             TaskType::PackageDownload => {
@@ -553,11 +605,11 @@ impl ParallelOperationsManager {
             _ => Ok(()),
         }
     }
-    
+
     async fn release_task_resources(&self, _task: &ParallelTask) {
         // Resources are automatically released when permits are dropped
     }
-    
+
     async fn execute_download_task(&self, task: &ParallelTask) -> TaskResult {
         tokio::time::sleep(task.estimated_duration).await;
         TaskResult {
@@ -568,7 +620,7 @@ impl ParallelOperationsManager {
             resource_usage: ResourceUsage::default(),
         }
     }
-    
+
     async fn execute_install_task(&self, task: &ParallelTask) -> TaskResult {
         tokio::time::sleep(task.estimated_duration).await;
         TaskResult {
@@ -579,7 +631,7 @@ impl ParallelOperationsManager {
             resource_usage: ResourceUsage::default(),
         }
     }
-    
+
     async fn execute_security_scan_task(&self, task: &ParallelTask) -> TaskResult {
         tokio::time::sleep(task.estimated_duration).await;
         TaskResult {
@@ -590,7 +642,7 @@ impl ParallelOperationsManager {
             resource_usage: ResourceUsage::default(),
         }
     }
-    
+
     async fn execute_dependency_task(&self, task: &ParallelTask) -> TaskResult {
         tokio::time::sleep(task.estimated_duration).await;
         TaskResult {
@@ -601,7 +653,7 @@ impl ParallelOperationsManager {
             resource_usage: ResourceUsage::default(),
         }
     }
-    
+
     async fn execute_generic_task(&self, task: &ParallelTask) -> TaskResult {
         tokio::time::sleep(task.estimated_duration).await;
         TaskResult {
@@ -612,11 +664,19 @@ impl ParallelOperationsManager {
             resource_usage: ResourceUsage::default(),
         }
     }
-    
-    async fn get_cpu_usage(&self) -> f64 { 45.0 }
-    async fn get_memory_usage(&self) -> f64 { 60.0 }
-    async fn get_disk_io_usage(&self) -> f64 { 30.0 }
-    async fn get_network_usage(&self) -> f64 { 25.0 }
+
+    async fn get_cpu_usage(&self) -> f64 {
+        45.0
+    }
+    async fn get_memory_usage(&self) -> f64 {
+        60.0
+    }
+    async fn get_disk_io_usage(&self) -> f64 {
+        30.0
+    }
+    async fn get_network_usage(&self) -> f64 {
+        25.0
+    }
 }
 
 // Helper struct for cloning references
@@ -716,4 +776,4 @@ impl Default for BottleneckAnalysis {
             bottleneck_severity: 0.0,
         }
     }
-} 
+}

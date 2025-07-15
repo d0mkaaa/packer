@@ -3,12 +3,11 @@ use crate::{
     package::Package,
 };
 use chrono::{DateTime, Utc};
-use log::{info, warn, error};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use tokio::fs;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TransactionStatus {
@@ -329,10 +328,7 @@ impl DatabaseManager {
         } else {
             Self::create_new_database()
         };
-        Ok(Self {
-            db_path,
-            database,
-        })
+        Ok(Self { db_path, database })
     }
     async fn load_database(path: &PathBuf) -> PackerResult<PackageDatabase> {
         let content = fs::read_to_string(path).await?;
@@ -353,21 +349,40 @@ impl DatabaseManager {
         fs::write(&self.db_path, content).await?;
         Ok(())
     }
-    pub async fn add_package(&mut self, package: Package, reason: InstallReason) -> PackerResult<()> {
-        self.add_package_with_transaction(package, reason, "unknown".to_string()).await
+    pub async fn add_package(
+        &mut self,
+        package: Package,
+        reason: InstallReason,
+    ) -> PackerResult<()> {
+        self.add_package_with_transaction(package, reason, "unknown".to_string())
+            .await
     }
-    pub async fn add_package_with_transaction(&mut self, package: Package, reason: InstallReason, transaction_id: String) -> PackerResult<()> {
-        info!("Adding package to database: {} {}", package.name, package.version);
+    pub async fn add_package_with_transaction(
+        &mut self,
+        package: Package,
+        reason: InstallReason,
+        transaction_id: String,
+    ) -> PackerResult<()> {
+        info!(
+            "Adding package to database: {} {}",
+            package.name, package.version
+        );
         let installed_package = InstalledPackage {
             package: package.clone(),
             install_date: Utc::now(),
             install_reason: reason.clone(),
             manually_installed: matches!(reason, InstallReason::Explicit),
-            dependencies: package.dependencies.iter().map(|d| d.name.clone()).collect(),
+            dependencies: package
+                .dependencies
+                .iter()
+                .map(|d| d.name.clone())
+                .collect(),
             dependents: Vec::new(),
             installation_transaction_id: transaction_id,
         };
-        self.database.packages.insert(package.name.clone(), installed_package);
+        self.database
+            .packages
+            .insert(package.name.clone(), installed_package);
         self.database.last_updated = Utc::now();
         for dep in &package.dependencies {
             if let Some(dep_package) = self.database.packages.get_mut(&dep.name) {
@@ -397,7 +412,7 @@ impl DatabaseManager {
     pub async fn add_transaction(&mut self, transaction: TransactionRecord) -> PackerResult<()> {
         info!("Adding transaction to database: {}", transaction.id);
         if self.database.transactions.len() >= 1000 {
-            self.database.transactions.drain(0..100); 
+            self.database.transactions.drain(0..100);
         }
         self.database.transactions.push(transaction);
         self.database.last_updated = Utc::now();
@@ -414,15 +429,22 @@ impl DatabaseManager {
         }
     }
     pub fn get_transaction_by_id(&self, transaction_id: &str) -> Option<&TransactionRecord> {
-        self.database.transactions.iter().find(|t| t.id == transaction_id)
+        self.database
+            .transactions
+            .iter()
+            .find(|t| t.id == transaction_id)
     }
     pub fn get_transactions_by_package(&self, package_name: &str) -> Vec<&TransactionRecord> {
-        self.database.transactions.iter()
+        self.database
+            .transactions
+            .iter()
             .filter(|t| t.packages.iter().any(|p| p.name == package_name))
             .collect()
     }
     pub fn get_failed_transactions(&self) -> Vec<&TransactionRecord> {
-        self.database.transactions.iter()
+        self.database
+            .transactions
+            .iter()
             .filter(|t| !t.success)
             .collect()
     }
@@ -434,7 +456,10 @@ impl DatabaseManager {
         }))
     }
     pub async fn get_all_packages(&self) -> PackerResult<Vec<(Package, InstallReason)>> {
-        Ok(self.database.packages.values()
+        Ok(self
+            .database
+            .packages
+            .values()
             .map(|p| {
                 let mut package = p.package.clone();
                 package.install_date = Some(p.install_date);
@@ -442,7 +467,11 @@ impl DatabaseManager {
             })
             .collect())
     }
-    pub async fn update_package_size(&mut self, package_name: &str, new_size: u64) -> PackerResult<()> {
+    pub async fn update_package_size(
+        &mut self,
+        package_name: &str,
+        new_size: u64,
+    ) -> PackerResult<()> {
         if let Some(installed_package) = self.database.packages.get_mut(package_name) {
             installed_package.package.installed_size = new_size;
             self.database.last_updated = Utc::now();
@@ -463,7 +492,10 @@ impl DatabaseManager {
         }
     }
     pub async fn get_packages_with_zero_size(&self) -> PackerResult<Vec<Package>> {
-        Ok(self.database.packages.values()
+        Ok(self
+            .database
+            .packages
+            .values()
             .filter(|p| p.package.installed_size == 0)
             .map(|p| p.package.clone())
             .collect())
@@ -492,13 +524,16 @@ impl DatabaseManager {
     }
     pub async fn search_packages(&self, query: &str, exact: bool) -> PackerResult<Vec<Package>> {
         let query = query.to_lowercase();
-        let results = self.database.packages.values()
+        let results = self
+            .database
+            .packages
+            .values()
             .filter(|p| {
                 if exact {
                     p.package.name.to_lowercase() == query
                 } else {
-                    p.package.name.to_lowercase().contains(&query) ||
-                    p.package.description.to_lowercase().contains(&query)
+                    p.package.name.to_lowercase().contains(&query)
+                        || p.package.description.to_lowercase().contains(&query)
                 }
             })
             .map(|p| p.package.clone())
@@ -506,7 +541,10 @@ impl DatabaseManager {
         Ok(results)
     }
     pub async fn find_dependents(&self, package_name: &str) -> PackerResult<Vec<String>> {
-        Ok(self.database.packages.get(package_name)
+        Ok(self
+            .database
+            .packages
+            .get(package_name)
             .map(|p| p.dependents.clone())
             .unwrap_or_default())
     }
@@ -529,7 +567,10 @@ impl DatabaseManager {
         for (_, installed_package) in &self.database.packages {
             for dep_name in &installed_package.dependencies {
                 if !self.database.packages.contains_key(dep_name) {
-                    broken_deps.push(format!("{} -> {}", installed_package.package.name, dep_name));
+                    broken_deps.push(format!(
+                        "{} -> {}",
+                        installed_package.package.name, dep_name
+                    ));
                 }
             }
         }
@@ -537,7 +578,10 @@ impl DatabaseManager {
     }
     pub async fn get_package_stats(&self) -> PackerResult<DatabaseStats> {
         let total_packages = self.database.packages.len();
-        let manually_installed = self.database.packages.values()
+        let manually_installed = self
+            .database
+            .packages
+            .values()
             .filter(|p| p.manually_installed)
             .count();
         let auto_installed = total_packages - manually_installed;
@@ -571,7 +615,9 @@ impl DatabaseManager {
     pub async fn restore_database(&mut self, backup_path: &PathBuf) -> PackerResult<()> {
         info!("Restoring database from {:?}", backup_path);
         if !backup_path.exists() {
-            return Err(PackerError::DatabaseError("Backup file does not exist".to_string()));
+            return Err(PackerError::DatabaseError(
+                "Backup file does not exist".to_string(),
+            ));
         }
         let content = fs::read_to_string(backup_path).await?;
         self.database = serde_json::from_str(&content)?;
@@ -582,13 +628,16 @@ impl DatabaseManager {
     pub async fn clean_database(&mut self) -> PackerResult<()> {
         info!("Cleaning database");
         if self.database.transactions.len() > 500 {
-            self.database.transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+            self.database
+                .transactions
+                .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
             self.database.transactions.truncate(500);
         }
         let mut to_remove = Vec::new();
         for (name, package) in &self.database.packages {
-            if matches!(package.install_reason, InstallReason::Dependency) 
-                && package.dependents.is_empty() {
+            if matches!(package.install_reason, InstallReason::Dependency)
+                && package.dependents.is_empty()
+            {
                 to_remove.push(name.clone());
             }
         }
@@ -600,7 +649,10 @@ impl DatabaseManager {
     }
     pub async fn export_package_list(&self, export_path: &PathBuf) -> PackerResult<()> {
         info!("Exporting package list to {:?}", export_path);
-        let package_list: Vec<PackageExport> = self.database.packages.values()
+        let package_list: Vec<PackageExport> = self
+            .database
+            .packages
+            .values()
             .map(|p| PackageExport {
                 name: p.package.name.clone(),
                 version: p.package.version.clone(),
@@ -618,7 +670,9 @@ impl DatabaseManager {
     pub async fn import_package_list(&mut self, import_path: &PathBuf) -> PackerResult<()> {
         info!("Importing package list from {:?}", import_path);
         if !import_path.exists() {
-            return Err(PackerError::DatabaseError("Import file does not exist".to_string()));
+            return Err(PackerError::DatabaseError(
+                "Import file does not exist".to_string(),
+            ));
         }
         let content = fs::read_to_string(import_path).await?;
         let package_list: Vec<PackageExport> = serde_json::from_str(&content)?;
@@ -631,7 +685,9 @@ impl DatabaseManager {
                 arch: "x86_64".to_string(),
                 size: 0,
                 installed_size: 0,
-                dependencies: package_export.dependencies.iter()
+                dependencies: package_export
+                    .dependencies
+                    .iter()
                     .map(|name| crate::dependency::Dependency {
                         name: name.clone(),
                         version_req: None,
@@ -711,28 +767,30 @@ impl Default for TransactionProgress {
 }
 impl TransactionStatus {
     pub fn is_active(&self) -> bool {
-        matches!(self, 
-            TransactionStatus::Preparing |
-            TransactionStatus::Downloading |
-            TransactionStatus::Verifying |
-            TransactionStatus::Installing |
-            TransactionStatus::Configuring |
-            TransactionStatus::Finalizing |
-            TransactionStatus::RollingBack
+        matches!(
+            self,
+            TransactionStatus::Preparing
+                | TransactionStatus::Downloading
+                | TransactionStatus::Verifying
+                | TransactionStatus::Installing
+                | TransactionStatus::Configuring
+                | TransactionStatus::Finalizing
+                | TransactionStatus::RollingBack
         )
     }
     pub fn is_completed(&self) -> bool {
-        matches!(self, 
-            TransactionStatus::Completed |
-            TransactionStatus::Failed |
-            TransactionStatus::Cancelled |
-            TransactionStatus::RolledBack
+        matches!(
+            self,
+            TransactionStatus::Completed
+                | TransactionStatus::Failed
+                | TransactionStatus::Cancelled
+                | TransactionStatus::RolledBack
         )
     }
     pub fn can_rollback(&self) -> bool {
-        matches!(self, 
-            TransactionStatus::Completed |
-            TransactionStatus::Failed
+        matches!(
+            self,
+            TransactionStatus::Completed | TransactionStatus::Failed
         )
     }
 }
@@ -750,18 +808,23 @@ impl AdvancedTransactionManager {
             integrity_checking: true,
         }
     }
-    
-    pub async fn create_system_snapshot(&mut self, snapshot_id: String) -> PackerResult<SystemSnapshot> {
+
+    pub async fn create_system_snapshot(
+        &mut self,
+        snapshot_id: String,
+    ) -> PackerResult<SystemSnapshot> {
         info!("Creating system snapshot: {}", snapshot_id);
-        
+
         let packages_state = self.capture_package_state().await?;
         let filesystem_state = self.capture_filesystem_state().await?;
         let configuration_state = self.capture_configuration_state().await?;
         let dependency_graph = self.build_dependency_graph(&packages_state).await?;
-        
+
         let size_bytes = self.calculate_snapshot_size(&packages_state, &filesystem_state);
-        let checksum = self.calculate_snapshot_checksum(&packages_state, &filesystem_state).await?;
-        
+        let checksum = self
+            .calculate_snapshot_checksum(&packages_state, &filesystem_state)
+            .await?;
+
         let snapshot = SystemSnapshot {
             snapshot_id: snapshot_id.clone(),
             created_at: Utc::now(),
@@ -772,31 +835,33 @@ impl AdvancedTransactionManager {
             size_bytes,
             checksum,
         };
-        
+
         self.snapshot_states.insert(snapshot_id, snapshot.clone());
         info!("System snapshot created successfully");
-        
+
         Ok(snapshot)
     }
-    
+
     pub async fn execute_atomic_transaction(
         &mut self,
         transaction: &mut TransactionRecord,
         rollback_strategy: RollbackStrategy,
     ) -> PackerResult<()> {
         info!("Executing atomic transaction: {}", transaction.id);
-        
+
         let snapshot_id = format!("{}_snapshot", transaction.id);
         let snapshot = self.create_system_snapshot(snapshot_id.clone()).await?;
-        
+
         let recovery_point = self.create_recovery_point(transaction, &snapshot).await?;
-        self.recovery_points.insert(recovery_point.recovery_id.clone(), recovery_point.clone());
-        
+        self.recovery_points
+            .insert(recovery_point.recovery_id.clone(), recovery_point.clone());
+
         transaction.status = TransactionStatus::Preparing;
-        self.active_transactions.insert(transaction.id.clone(), transaction.clone());
-        
+        self.active_transactions
+            .insert(transaction.id.clone(), transaction.clone());
+
         let result = self.execute_transaction_steps(transaction).await;
-        
+
         match result {
             Ok(_) => {
                 transaction.status = TransactionStatus::Completed;
@@ -808,40 +873,53 @@ impl AdvancedTransactionManager {
                 transaction.status = TransactionStatus::Failed;
                 transaction.success = false;
                 transaction.error_message = Some(e.to_string());
-                
+
                 if self.auto_rollback_enabled {
-                    match self.rollback_transaction(&transaction.id, rollback_strategy).await {
+                    match self
+                        .rollback_transaction(&transaction.id, rollback_strategy)
+                        .await
+                    {
                         Ok(_) => {
                             transaction.status = TransactionStatus::RolledBack;
                             info!("Transaction {} rolled back successfully", transaction.id);
                         }
                         Err(rollback_err) => {
-                            error!("Rollback failed for transaction {}: {}", transaction.id, rollback_err);
+                            error!(
+                                "Rollback failed for transaction {}: {}",
+                                transaction.id, rollback_err
+                            );
                             transaction.status = TransactionStatus::RequiresManualIntervention;
                         }
                     }
                 }
-                
+
                 return Err(e);
             }
         }
-        
+
         self.active_transactions.remove(&transaction.id);
         self.add_to_history(transaction.clone());
-        
+
         Ok(())
     }
-    
+
     pub async fn rollback_transaction(
         &mut self,
         transaction_id: &str,
         strategy: RollbackStrategy,
     ) -> PackerResult<()> {
-        info!("Rolling back transaction {} with strategy {:?}", transaction_id, strategy);
-        
-        let recovery_point = self.recovery_points.get(transaction_id)
-            .ok_or_else(|| PackerError::TransactionError(format!("No recovery point found for transaction {}", transaction_id)))?;
-        
+        info!(
+            "Rolling back transaction {} with strategy {:?}",
+            transaction_id, strategy
+        );
+
+        let recovery_point = self.recovery_points.get(transaction_id).ok_or_else(|| {
+            PackerError::TransactionError(format!(
+                "No recovery point found for transaction {}",
+                transaction_id
+            ))
+        })?;
+
         match strategy {
             RollbackStrategy::Sequential => {
                 self.execute_sequential_rollback(recovery_point).await?;
@@ -859,13 +937,16 @@ impl AdvancedTransactionManager {
                 self.execute_full_system_restore(recovery_point).await?;
             }
         }
-        
+
         self.validate_rollback_completion(recovery_point).await?;
-        info!("Transaction {} rollback completed successfully", transaction_id);
-        
+        info!(
+            "Transaction {} rollback completed successfully",
+            transaction_id
+        );
+
         Ok(())
     }
-    
+
     pub async fn create_transaction_chain(
         &mut self,
         chain_id: String,
@@ -873,13 +954,17 @@ impl AdvancedTransactionManager {
         atomicity_level: AtomicityLevel,
         failure_handling: FailureHandling,
     ) -> PackerResult<()> {
-        info!("Creating transaction chain: {} with {} transactions", chain_id, transactions.len());
-        
+        info!(
+            "Creating transaction chain: {} with {} transactions",
+            chain_id,
+            transactions.len()
+        );
+
         let chain_snapshot_id = format!("{}_chain_snapshot", chain_id);
         let _chain_snapshot = self.create_system_snapshot(chain_snapshot_id).await?;
-        
+
         let transaction_ids: Vec<String> = transactions.iter().map(|t| t.id.clone()).collect();
-        
+
         let chain = TransactionChain {
             chain_id: chain_id.clone(),
             transactions: transaction_ids.clone(),
@@ -887,43 +972,58 @@ impl AdvancedTransactionManager {
             atomicity_level,
             failure_handling,
         };
-        
+
         let mut completed_transactions = Vec::new();
         let mut chain_success = true;
-        
+
         for mut transaction in transactions {
-            let result = self.execute_atomic_transaction(
-                &mut transaction,
-                chain.rollback_strategy.clone(),
-            ).await;
-            
+            let result = self
+                .execute_atomic_transaction(&mut transaction, chain.rollback_strategy.clone())
+                .await;
+
             match result {
                 Ok(_) => {
                     completed_transactions.push(transaction.id.clone());
                 }
                 Err(e) => {
-                    error!("Transaction {} in chain {} failed: {}", transaction.id, chain_id, e);
+                    error!(
+                        "Transaction {} in chain {} failed: {}",
+                        transaction.id, chain_id, e
+                    );
                     chain_success = false;
-                    
+
                     match chain.failure_handling {
                         FailureHandling::Abort => {
-                            self.rollback_transaction_chain(&chain_id, &completed_transactions).await?;
+                            self.rollback_transaction_chain(&chain_id, &completed_transactions)
+                                .await?;
                             return Err(e);
                         }
                         FailureHandling::ContinueWithWarning => {
-                            warn!("Continuing chain execution despite failure in transaction {}", transaction.id);
+                            warn!(
+                                "Continuing chain execution despite failure in transaction {}",
+                                transaction.id
+                            );
                         }
                         FailureHandling::SkipFailed => {
-                            info!("Skipping failed transaction {} and continuing chain", transaction.id);
+                            info!(
+                                "Skipping failed transaction {} and continuing chain",
+                                transaction.id
+                            );
                         }
                         FailureHandling::UserIntervention => {
-                            return Err(PackerError::TransactionError(
-                                format!("Transaction chain {} requires user intervention", chain_id)
-                            ));
+                            return Err(PackerError::TransactionError(format!(
+                                "Transaction chain {} requires user intervention",
+                                chain_id
+                            )));
                         }
                         FailureHandling::AutoRecover => {
-                            if let Err(recovery_err) = self.attempt_auto_recovery(&transaction.id).await {
-                                error!("Auto-recovery failed for transaction {}: {}", transaction.id, recovery_err);
+                            if let Err(recovery_err) =
+                                self.attempt_auto_recovery(&transaction.id).await
+                            {
+                                error!(
+                                    "Auto-recovery failed for transaction {}: {}",
+                                    transaction.id, recovery_err
+                                );
                                 return Err(e);
                             }
                         }
@@ -931,20 +1031,30 @@ impl AdvancedTransactionManager {
                 }
             }
         }
-        
+
         if chain_success {
             info!("Transaction chain {} completed successfully", chain_id);
         } else {
-            warn!("Transaction chain {} completed with some failures", chain_id);
+            warn!(
+                "Transaction chain {} completed with some failures",
+                chain_id
+            );
         }
-        
+
         Ok(())
     }
-    
-    pub async fn optimize_recovery_strategy(&self, transaction_id: &str) -> PackerResult<RollbackStrategy> {
-        let recovery_point = self.recovery_points.get(transaction_id)
-            .ok_or_else(|| PackerError::TransactionError(format!("No recovery point found for transaction {}", transaction_id)))?;
-        
+
+    pub async fn optimize_recovery_strategy(
+        &self,
+        transaction_id: &str,
+    ) -> PackerResult<RollbackStrategy> {
+        let recovery_point = self.recovery_points.get(transaction_id).ok_or_else(|| {
+            PackerError::TransactionError(format!(
+                "No recovery point found for transaction {}",
+                transaction_id
+            ))
+        })?;
+
         let strategy = match recovery_point.recovery_complexity {
             RecoveryComplexity::Simple => RollbackStrategy::Sequential,
             RecoveryComplexity::Moderate => {
@@ -963,59 +1073,85 @@ impl AdvancedTransactionManager {
             }
             RecoveryComplexity::HighRisk => RollbackStrategy::FullSystemRestore,
         };
-        
-        info!("Optimized rollback strategy for transaction {}: {:?}", transaction_id, strategy);
+
+        info!(
+            "Optimized rollback strategy for transaction {}: {:?}",
+            transaction_id, strategy
+        );
         Ok(strategy)
     }
-    
+
     pub async fn validate_system_integrity(&self, snapshot_id: &str) -> PackerResult<bool> {
-        info!("Validating system integrity against snapshot: {}", snapshot_id);
-        
-        let snapshot = self.snapshot_states.get(snapshot_id)
-            .ok_or_else(|| PackerError::TransactionError(format!("Snapshot {} not found", snapshot_id)))?;
-        
+        info!(
+            "Validating system integrity against snapshot: {}",
+            snapshot_id
+        );
+
+        let snapshot = self.snapshot_states.get(snapshot_id).ok_or_else(|| {
+            PackerError::TransactionError(format!("Snapshot {} not found", snapshot_id))
+        })?;
+
         let current_packages = self.capture_package_state().await?;
         let current_filesystem = self.capture_filesystem_state().await?;
-        
-        let packages_valid = self.validate_packages_integrity(&snapshot.packages_state, &current_packages).await?;
-        let filesystem_valid = self.validate_filesystem_integrity(&snapshot.filesystem_state, &current_filesystem).await?;
-        
+
+        let packages_valid = self
+            .validate_packages_integrity(&snapshot.packages_state, &current_packages)
+            .await?;
+        let filesystem_valid = self
+            .validate_filesystem_integrity(&snapshot.filesystem_state, &current_filesystem)
+            .await?;
+
         let integrity_valid = packages_valid && filesystem_valid;
-        
+
         if integrity_valid {
             info!("System integrity validation passed");
         } else {
             warn!("System integrity validation failed");
         }
-        
+
         Ok(integrity_valid)
     }
-    
+
     async fn capture_package_state(&self) -> PackerResult<HashMap<String, Package>> {
         Ok(HashMap::new())
     }
-    
+
     async fn capture_filesystem_state(&self) -> PackerResult<HashMap<String, FileSystemEntry>> {
         Ok(HashMap::new())
     }
-    
+
     async fn capture_configuration_state(&self) -> PackerResult<HashMap<String, String>> {
         Ok(HashMap::new())
     }
-    
-    async fn build_dependency_graph(&self, _packages: &HashMap<String, Package>) -> PackerResult<HashMap<String, Vec<String>>> {
+
+    async fn build_dependency_graph(
+        &self,
+        _packages: &HashMap<String, Package>,
+    ) -> PackerResult<HashMap<String, Vec<String>>> {
         Ok(HashMap::new())
     }
-    
-    fn calculate_snapshot_size(&self, packages: &HashMap<String, Package>, _filesystem: &HashMap<String, FileSystemEntry>) -> u64 {
+
+    fn calculate_snapshot_size(
+        &self,
+        packages: &HashMap<String, Package>,
+        _filesystem: &HashMap<String, FileSystemEntry>,
+    ) -> u64 {
         packages.values().map(|p| p.size).sum()
     }
-    
-    async fn calculate_snapshot_checksum(&self, _packages: &HashMap<String, Package>, _filesystem: &HashMap<String, FileSystemEntry>) -> PackerResult<String> {
+
+    async fn calculate_snapshot_checksum(
+        &self,
+        _packages: &HashMap<String, Package>,
+        _filesystem: &HashMap<String, FileSystemEntry>,
+    ) -> PackerResult<String> {
         Ok("checksum_placeholder".to_string())
     }
-    
-    async fn create_recovery_point(&self, transaction: &TransactionRecord, _snapshot: &SystemSnapshot) -> PackerResult<RecoveryPoint> {
+
+    async fn create_recovery_point(
+        &self,
+        transaction: &TransactionRecord,
+        _snapshot: &SystemSnapshot,
+    ) -> PackerResult<RecoveryPoint> {
         Ok(RecoveryPoint {
             recovery_id: format!("{}_recovery", transaction.id),
             transaction_id: transaction.id.clone(),
@@ -1027,51 +1163,81 @@ impl AdvancedTransactionManager {
             recovery_complexity: RecoveryComplexity::Simple,
         })
     }
-    
-    async fn execute_transaction_steps(&self, _transaction: &mut TransactionRecord) -> PackerResult<()> {
+
+    async fn execute_transaction_steps(
+        &self,
+        _transaction: &mut TransactionRecord,
+    ) -> PackerResult<()> {
         Ok(())
     }
-    
-    async fn execute_sequential_rollback(&self, _recovery_point: &RecoveryPoint) -> PackerResult<()> {
+
+    async fn execute_sequential_rollback(
+        &self,
+        _recovery_point: &RecoveryPoint,
+    ) -> PackerResult<()> {
         Ok(())
     }
-    
+
     async fn execute_parallel_rollback(&self, _recovery_point: &RecoveryPoint) -> PackerResult<()> {
         Ok(())
     }
-    
-    async fn execute_selective_rollback(&self, _recovery_point: &RecoveryPoint) -> PackerResult<()> {
+
+    async fn execute_selective_rollback(
+        &self,
+        _recovery_point: &RecoveryPoint,
+    ) -> PackerResult<()> {
         Ok(())
     }
-    
-    async fn execute_checkpoint_rollback(&self, _recovery_point: &RecoveryPoint) -> PackerResult<()> {
+
+    async fn execute_checkpoint_rollback(
+        &self,
+        _recovery_point: &RecoveryPoint,
+    ) -> PackerResult<()> {
         Ok(())
     }
-    
-    async fn execute_full_system_restore(&self, _recovery_point: &RecoveryPoint) -> PackerResult<()> {
+
+    async fn execute_full_system_restore(
+        &self,
+        _recovery_point: &RecoveryPoint,
+    ) -> PackerResult<()> {
         Ok(())
     }
-    
-    async fn validate_rollback_completion(&self, _recovery_point: &RecoveryPoint) -> PackerResult<()> {
+
+    async fn validate_rollback_completion(
+        &self,
+        _recovery_point: &RecoveryPoint,
+    ) -> PackerResult<()> {
         Ok(())
     }
-    
-    async fn rollback_transaction_chain(&mut self, _chain_id: &str, _completed_transactions: &[String]) -> PackerResult<()> {
+
+    async fn rollback_transaction_chain(
+        &mut self,
+        _chain_id: &str,
+        _completed_transactions: &[String],
+    ) -> PackerResult<()> {
         Ok(())
     }
-    
+
     async fn attempt_auto_recovery(&self, _transaction_id: &str) -> PackerResult<()> {
         Ok(())
     }
-    
-    async fn validate_packages_integrity(&self, _expected: &HashMap<String, Package>, _current: &HashMap<String, Package>) -> PackerResult<bool> {
+
+    async fn validate_packages_integrity(
+        &self,
+        _expected: &HashMap<String, Package>,
+        _current: &HashMap<String, Package>,
+    ) -> PackerResult<bool> {
         Ok(true)
     }
-    
-    async fn validate_filesystem_integrity(&self, _expected: &HashMap<String, FileSystemEntry>, _current: &HashMap<String, FileSystemEntry>) -> PackerResult<bool> {
+
+    async fn validate_filesystem_integrity(
+        &self,
+        _expected: &HashMap<String, FileSystemEntry>,
+        _current: &HashMap<String, FileSystemEntry>,
+    ) -> PackerResult<bool> {
         Ok(true)
     }
-    
+
     fn add_to_history(&mut self, transaction: TransactionRecord) {
         if self.transaction_history.len() >= self.max_history_size {
             self.transaction_history.pop_front();

@@ -1,18 +1,18 @@
+use chrono::{DateTime, Utc};
+use clap::{Arg, ArgAction, ArgMatches, Command};
+use colored::Colorize;
+use log::info;
 use packer::{
     config::Config,
     package::{PackageManager, TransactionType},
     storage::PackageOperation,
     utils::{format_duration, format_size},
 };
-use log::info;
-use std::time::Instant;
-use std::io::Write;
-use tokio;
-use clap::{Arg, ArgAction, ArgMatches, Command};
-use colored::Colorize;
-use std::path::PathBuf;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::Instant;
+use tokio;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionRecord {
     pub id: String,
@@ -46,7 +46,10 @@ async fn main() {
         std::process::exit(1);
     }
     let duration = start_time.elapsed();
-    info!("Operation completed in {}", format_duration(duration.as_secs()));
+    info!(
+        "Operation completed in {}",
+        format_duration(duration.as_secs())
+    );
 }
 fn build_cli() -> Command {
     Command::new("packer")
@@ -452,7 +455,6 @@ fn build_cli() -> Command {
                 .long("repo")
                 .value_name("REPO")
                 .help("Filter by specific repository")))
-
 }
 async fn run_command(matches: ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = matches.get_one::<String>("config");
@@ -460,17 +462,35 @@ async fn run_command(matches: ArgMatches) -> Result<(), Box<dyn std::error::Erro
     let mut package_manager = PackageManager::new(config.clone()).await?;
     match matches.subcommand() {
         Some(("install", sub_matches)) => {
-            let packages: Vec<&str> = sub_matches.get_many::<String>("packages").unwrap().map(|s| s.as_str()).collect();
+            let packages: Vec<&str> = sub_matches
+                .get_many::<String>("packages")
+                .unwrap()
+                .map(|s| s.as_str())
+                .collect();
             let force = sub_matches.get_flag("force");
             let no_deps = sub_matches.get_flag("no-deps");
             let verify_signatures = sub_matches.get_flag("verify-signatures");
             let skip_security_scan = sub_matches.get_flag("skip-security-scan");
             let interactive = sub_matches.get_flag("interactive");
             let preview = sub_matches.get_flag("preview");
-            handle_install(&mut package_manager, packages, force, no_deps, verify_signatures, !skip_security_scan, interactive, preview).await?;
+            handle_install(
+                &mut package_manager,
+                packages,
+                force,
+                no_deps,
+                verify_signatures,
+                !skip_security_scan,
+                interactive,
+                preview,
+            )
+            .await?;
         }
         Some(("remove", sub_matches)) => {
-            let packages: Vec<&str> = sub_matches.get_many::<String>("packages").unwrap().map(|s| s.as_str()).collect();
+            let packages: Vec<&str> = sub_matches
+                .get_many::<String>("packages")
+                .unwrap()
+                .map(|s| s.as_str())
+                .collect();
             let force = sub_matches.get_flag("force");
             let cascade = sub_matches.get_flag("cascade");
             handle_remove(&mut package_manager, packages, force, cascade).await?;
@@ -481,11 +501,26 @@ async fn run_command(matches: ArgMatches) -> Result<(), Box<dyn std::error::Erro
             let repository = sub_matches.get_one::<String>("repository");
             let version_filter = sub_matches.get_one::<String>("version");
             let sort_by = sub_matches.get_one::<String>("sort").unwrap();
-            let limit = sub_matches.get_one::<String>("limit").unwrap().parse::<usize>()?;
+            let limit = sub_matches
+                .get_one::<String>("limit")
+                .unwrap()
+                .parse::<usize>()?;
             let installed_only = sub_matches.get_flag("installed");
             let not_installed_only = sub_matches.get_flag("not-installed");
             let detailed = sub_matches.get_flag("detailed");
-            handle_search(&package_manager, query, exact, repository, version_filter, sort_by, limit, installed_only, not_installed_only, detailed).await?;
+            handle_search(
+                &package_manager,
+                query,
+                exact,
+                repository,
+                version_filter,
+                sort_by,
+                limit,
+                installed_only,
+                not_installed_only,
+                detailed,
+            )
+            .await?;
         }
         Some(("info", sub_matches)) => {
             let package = sub_matches.get_one::<String>("package").unwrap();
@@ -493,7 +528,15 @@ async fn run_command(matches: ArgMatches) -> Result<(), Box<dyn std::error::Erro
             let show_deps = sub_matches.get_flag("show-deps");
             let show_rdeps = sub_matches.get_flag("show-rdeps");
             let security_info = sub_matches.get_flag("security-info");
-            handle_info(&package_manager, package, show_files, show_deps, show_rdeps, security_info).await?;
+            handle_info(
+                &package_manager,
+                package,
+                show_files,
+                show_deps,
+                show_rdeps,
+                security_info,
+            )
+            .await?;
         }
         Some(("list", sub_matches)) => {
             let explicit = sub_matches.get_flag("explicit");
@@ -508,7 +551,9 @@ async fn run_command(matches: ArgMatches) -> Result<(), Box<dyn std::error::Erro
             handle_update(&mut package_manager, repository, force).await?;
         }
         Some(("upgrade", sub_matches)) => {
-            let packages = sub_matches.get_many::<String>("packages").map(|v| v.map(|s| s.as_str()).collect::<Vec<_>>());
+            let packages = sub_matches
+                .get_many::<String>("packages")
+                .map(|v| v.map(|s| s.as_str()).collect::<Vec<_>>());
             let ignore = sub_matches.get_one::<String>("ignore");
             let security_only = sub_matches.get_flag("security-only");
             handle_upgrade(&mut package_manager, packages, ignore, security_only).await?;
@@ -584,11 +629,15 @@ async fn handle_install(
         package_requests.push((name, version_req));
     }
     if interactive {
-        let resolved_packages = handle_interactive_version_selection(package_manager, &package_requests).await?;
+        let resolved_packages =
+            handle_interactive_version_selection(package_manager, &package_requests).await?;
         let package_names: Vec<String> = resolved_packages.into_iter().map(|p| p.name).collect();
-        package_manager.install_packages(&package_names, force, no_deps, preview).await?;
+        package_manager
+            .install_packages(&package_names, force, no_deps, preview)
+            .await?;
     } else {
-        let resolved_packages = resolve_package_versions(package_manager, &package_requests).await?;
+        let resolved_packages =
+            resolve_package_versions(package_manager, &package_requests).await?;
         let package_names: Vec<String> = resolved_packages.into_iter().map(|p| p.name).collect();
         if preview {
             show_installation_preview(package_manager, &package_names).await?;
@@ -609,25 +658,37 @@ async fn handle_install(
         if verify_signatures {
             println!("{}", "🔐 Verifying GPG signatures...".cyan());
         }
-        package_manager.install_packages(&package_names, force, no_deps, false).await?;
+        package_manager
+            .install_packages(&package_names, force, no_deps, false)
+            .await?;
     }
     println!("{}", "✅ Installation completed successfully!".green());
     Ok(())
 }
-fn parse_package_specification(spec: &str) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
+fn parse_package_specification(
+    spec: &str,
+) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
     if spec.contains('@') {
         let parts: Vec<&str> = spec.split('@').collect();
         if parts.len() == 2 {
             Ok((parts[0].to_string(), Some(parts[1].to_string())))
         } else {
-            Err(format!("Invalid package specification: {}. Use package@version format.", spec).into())
+            Err(format!(
+                "Invalid package specification: {}. Use package@version format.",
+                spec
+            )
+            .into())
         }
     } else if spec.contains('=') {
         let parts: Vec<&str> = spec.split('=').collect();
         if parts.len() == 2 {
             Ok((parts[0].to_string(), Some(parts[1].to_string())))
         } else {
-            Err(format!("Invalid package specification: {}. Use package=version format.", spec).into())
+            Err(format!(
+                "Invalid package specification: {}. Use package=version format.",
+                spec
+            )
+            .into())
         }
     } else {
         Ok((spec.to_string(), None))
@@ -643,7 +704,10 @@ async fn resolve_package_versions(
             let package = find_package_version(package_manager, name, version).await?;
             resolved_packages.push(package);
         } else {
-            let package = package_manager.repository_manager.get_package(name).await?
+            let package = package_manager
+                .repository_manager
+                .get_package(name)
+                .await?
                 .ok_or_else(|| format!("Package '{}' not found", name))?;
             resolved_packages.push(package);
         }
@@ -655,13 +719,20 @@ async fn find_package_version(
     name: &str,
     version: &str,
 ) -> Result<packer::package::Package, Box<dyn std::error::Error>> {
-    let packages = package_manager.repository_manager.search_packages(name, true).await?;
+    let packages = package_manager
+        .repository_manager
+        .search_packages(name, true)
+        .await?;
     for package in packages {
         if package.name == name && package.version == version {
             return Ok(package);
         }
     }
-    if let Some(aur_packages) = package_manager.repository_manager.search_aur_directly(name, true).await? {
+    if let Some(aur_packages) = package_manager
+        .repository_manager
+        .search_aur_directly(name, true)
+        .await?
+    {
         for package in aur_packages {
             if package.name == name && package.version == version {
                 return Ok(package);
@@ -677,7 +748,8 @@ async fn handle_interactive_version_selection(
     let mut selected_packages = Vec::new();
     for (name, version_req) in package_requests {
         if version_req.is_some() {
-            let package = find_package_version(package_manager, name, version_req.as_ref().unwrap()).await?;
+            let package =
+                find_package_version(package_manager, name, version_req.as_ref().unwrap()).await?;
             selected_packages.push(package);
         } else {
             let package = show_version_selection_menu(package_manager, name).await?;
@@ -690,18 +762,33 @@ async fn show_version_selection_menu(
     package_manager: &PackageManager,
     name: &str,
 ) -> Result<packer::package::Package, Box<dyn std::error::Error>> {
-    println!("\n{}", format!("📦 Available versions for {}:", name).bold());
+    println!(
+        "\n{}",
+        format!("📦 Available versions for {}:", name).bold()
+    );
     println!("{}", "=".repeat(50));
-    let packages = package_manager.repository_manager.search_packages(name, true).await?;
+    let packages = package_manager
+        .repository_manager
+        .search_packages(name, true)
+        .await?;
     if packages.is_empty() {
         return Err(format!("Package '{}' not found", name).into());
     }
-    let latest_package = packages.iter().max_by(|a, b| {
-        use packer::utils::compare_versions;
-        compare_versions(&a.version, &b.version).unwrap_or(std::cmp::Ordering::Equal)
-    }).unwrap();
-    println!("  {} {} {} (latest)", "1.".dimmed(), latest_package.name.bold(), latest_package.version.green());
-    println!("    {} | {} | {}", 
+    let latest_package = packages
+        .iter()
+        .max_by(|a, b| {
+            use packer::utils::compare_versions;
+            compare_versions(&a.version, &b.version).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap();
+    println!(
+        "  {} {} {} (latest)",
+        "1.".dimmed(),
+        latest_package.name.bold(),
+        latest_package.version.green()
+    );
+    println!(
+        "    {} | {} | {}",
         latest_package.repository.cyan(),
         format_size(latest_package.size),
         latest_package.description
@@ -735,22 +822,23 @@ async fn show_installation_preview(
                 "aur" => {
                     aur_count += 1;
                     format!("[{}]", "AUR".yellow())
-                },
+                }
                 "arch" => {
                     binary_count += 1;
                     format!("[{}]", "ARCH".blue())
-                },
+                }
                 "github" => {
                     binary_count += 1;
                     format!("[{}]", "GITHUB".purple())
-                },
+                }
                 _ => {
                     binary_count += 1;
                     format!("[{}]", package.repository.to_uppercase().cyan())
-                },
+                }
             };
             if package.repository == "aur" {
-                println!("  {} {} {} {} (source tarball: ~10 KB, binaries: ~{})",
+                println!(
+                    "  {} {} {} {} (source tarball: ~10 KB, binaries: ~{})",
                     repo_badge,
                     package.name.bold(),
                     package.version.green(),
@@ -760,7 +848,8 @@ async fn show_installation_preview(
                 total_download_size += 10 * 1024;
                 total_installed_size += package.size;
             } else {
-                println!("  {} {} {} {} ({})",
+                println!(
+                    "  {} {} {} {} ({})",
                     repo_badge,
                     package.name.bold(),
                     package.version.green(),
@@ -773,19 +862,42 @@ async fn show_installation_preview(
         }
     }
     println!("\n{}", "📊 Summary:".bold());
-    println!("  Packages: {} total ({} binary, {} AUR)", 
-        package_names.len(), binary_count, aur_count);
+    println!(
+        "  Packages: {} total ({} binary, {} AUR)",
+        package_names.len(),
+        binary_count,
+        aur_count
+    );
     if aur_count > 0 {
         println!("  Initial download: {}", format_size(total_download_size));
-        println!("  Additional downloads during build: {}", format_size(total_installed_size - total_download_size));
-        println!("  Total download size: {}", format_size(total_installed_size));
+        println!(
+            "  Additional downloads during build: {}",
+            format_size(total_installed_size - total_download_size)
+        );
+        println!(
+            "  Total download size: {}",
+            format_size(total_installed_size)
+        );
     } else {
-        println!("  Total download size: {}", format_size(total_download_size));
+        println!(
+            "  Total download size: {}",
+            format_size(total_download_size)
+        );
     }
-    println!("  Total installed size: {}", format_size(total_installed_size));
+    println!(
+        "  Total installed size: {}",
+        format_size(total_installed_size)
+    );
     if aur_count > 0 {
-        println!("\n{}", "ℹ️  Note: AUR packages require building from source.".yellow());
-        println!("{}", "   Initial downloads are small tarballs, actual binaries are downloaded during build.".yellow());
+        println!(
+            "\n{}",
+            "ℹ️  Note: AUR packages require building from source.".yellow()
+        );
+        println!(
+            "{}",
+            "   Initial downloads are small tarballs, actual binaries are downloaded during build."
+                .yellow()
+        );
     }
     Ok(())
 }
@@ -797,7 +909,9 @@ async fn handle_remove(
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Removing packages: {}", packages.join(", "));
     let package_names: Vec<String> = packages.iter().map(|s| s.to_string()).collect();
-    package_manager.remove_packages(&package_names, force, cascade, false).await?;
+    package_manager
+        .remove_packages(&package_names, force, cascade, false)
+        .await?;
     println!("{}", "✅ Removal completed successfully!".green());
     Ok(())
 }
@@ -818,7 +932,10 @@ async fn handle_search(
         Ok(packages) => packages,
         Err(e) => {
             if e.to_string().contains("timeout") || e.to_string().contains("network") {
-                println!("\n{}", "⚠️  Network timeout or error occurred during search.".yellow());
+                println!(
+                    "\n{}",
+                    "⚠️  Network timeout or error occurred during search.".yellow()
+                );
                 println!("Trying with local cache only...");
                 match package_manager.search_packages(query, exact, true).await {
                     Ok(local_packages) => {
@@ -826,7 +943,10 @@ async fn handle_search(
                         local_packages
                     }
                     Err(_) => {
-                        println!("{}", "❌ Search failed. Check your internet connection and try again.".red());
+                        println!(
+                            "{}",
+                            "❌ Search failed. Check your internet connection and try again.".red()
+                        );
                         return Ok(());
                     }
                 }
@@ -839,35 +959,40 @@ async fn handle_search(
         packages.retain(|p| p.repository == *repo);
     }
     if let Some(version_pattern) = version_filter {
-        packages.retain(|p| {
-            match version_pattern.parse::<semver::VersionReq>() {
-                Ok(version_req) => {
-                    if let Ok(version) = semver::Version::parse(&p.version) {
-                        version_req.matches(&version)
+        packages.retain(|p| match version_pattern.parse::<semver::VersionReq>() {
+            Ok(version_req) => {
+                if let Ok(version) = semver::Version::parse(&p.version) {
+                    version_req.matches(&version)
+                } else {
+                    false
+                }
+            }
+            Err(_) => match version_pattern.as_str() {
+                pat if pat.starts_with(">=") => {
+                    if let Ok(min_version) = semver::Version::parse(&pat[2..]) {
+                        if let Ok(pkg_version) = semver::Version::parse(&p.version) {
+                            pkg_version >= min_version
+                        } else {
+                            false
+                        }
                     } else {
                         false
                     }
-                },
-                Err(_) => {
-                    match version_pattern.as_str() {
-                        pat if pat.starts_with(">=") => {
-                            if let Ok(min_version) = semver::Version::parse(&pat[2..]) {
-                                if let Ok(pkg_version) = semver::Version::parse(&p.version) {
-                                    pkg_version >= min_version
-                                } else { false }
-                            } else { false }
-                        },
-                        pat if pat.starts_with("~") => {
-                            if let Ok(base_version) = semver::Version::parse(&format!("{}.0", &pat[1..])) {
-                                if let Ok(pkg_version) = semver::Version::parse(&p.version) {
-                                    pkg_version.major == base_version.major && pkg_version.minor == base_version.minor
-                                } else { false }
-                            } else { false }
-                        },
-                        _ => p.version.contains(version_pattern),
+                }
+                pat if pat.starts_with("~") => {
+                    if let Ok(base_version) = semver::Version::parse(&format!("{}.0", &pat[1..])) {
+                        if let Ok(pkg_version) = semver::Version::parse(&p.version) {
+                            pkg_version.major == base_version.major
+                                && pkg_version.minor == base_version.minor
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
                     }
                 }
-            }
+                _ => p.version.contains(version_pattern),
+            },
         });
     }
     if installed_only || not_installed_only {
@@ -880,26 +1005,31 @@ async fn handle_search(
         }
         packages = filtered_packages;
     }
-    packages.sort_by(|a, b| {
-        match sort_by {
-            "name" => a.name.cmp(&b.name),
-            "version" => {
-                use packer::utils::compare_versions;
-                compare_versions(&a.version, &b.version).unwrap_or(std::cmp::Ordering::Equal)
-            },
-            "size" => a.size.cmp(&b.size),
-            "repository" => a.repository.cmp(&b.repository),
-            _ => a.name.cmp(&b.name),
+    packages.sort_by(|a, b| match sort_by {
+        "name" => a.name.cmp(&b.name),
+        "version" => {
+            use packer::utils::compare_versions;
+            compare_versions(&a.version, &b.version).unwrap_or(std::cmp::Ordering::Equal)
         }
+        "size" => a.size.cmp(&b.size),
+        "repository" => a.repository.cmp(&b.repository),
+        _ => a.name.cmp(&b.name),
     });
     let final_packages = packages.into_iter().take(limit).collect::<Vec<_>>();
     if final_packages.is_empty() {
-        println!("\n{}", "No packages found matching the search criteria.".yellow());
+        println!(
+            "\n{}",
+            "No packages found matching the search criteria.".yellow()
+        );
         println!("Try using a broader search term or check for typos.");
         println!("You can also try: packer search --repo aur {}", query);
         return Ok(());
     }
-    println!("\n{} {} packages found", "Search Results:".bold().green(), final_packages.len());
+    println!(
+        "\n{} {} packages found",
+        "Search Results:".bold().green(),
+        final_packages.len()
+    );
     println!("{}", "=".repeat(80));
     for (index, package) in final_packages.iter().enumerate() {
         let repo_color = match package.repository.as_str() {
@@ -907,24 +1037,40 @@ async fn handle_search(
             "aur" => package.repository.yellow(),
             _ => package.repository.cyan(),
         };
-        
+
         let result = if detailed {
-            writeln!(std::io::stdout(), "\n{}. {} {} ({})",
+            writeln!(
+                std::io::stdout(),
+                "\n{}. {} {} ({})",
                 (index + 1).to_string().dimmed(),
                 package.name.bold(),
                 package.version.green(),
                 repo_color
-            ).and_then(|_| writeln!(std::io::stdout(), "   {}", package.description.trim()))
-            .and_then(|_| writeln!(std::io::stdout(), "   Size: {} | Maintainer: {}", 
-                format_size(package.size), 
-                if package.maintainer.is_empty() { "Unknown" } else { &package.maintainer }
-            )).and_then(|_| if !package.url.is_empty() {
-                writeln!(std::io::stdout(), "   URL: {}", package.url.dimmed())
-            } else {
-                Ok(())
+            )
+            .and_then(|_| writeln!(std::io::stdout(), "   {}", package.description.trim()))
+            .and_then(|_| {
+                writeln!(
+                    std::io::stdout(),
+                    "   Size: {} | Maintainer: {}",
+                    format_size(package.size),
+                    if package.maintainer.is_empty() {
+                        "Unknown"
+                    } else {
+                        &package.maintainer
+                    }
+                )
+            })
+            .and_then(|_| {
+                if !package.url.is_empty() {
+                    writeln!(std::io::stdout(), "   URL: {}", package.url.dimmed())
+                } else {
+                    Ok(())
+                }
             })
         } else {
-            writeln!(std::io::stdout(), "{}. {} {} ({}) - {}",
+            writeln!(
+                std::io::stdout(),
+                "{}. {} {} ({}) - {}",
                 (index + 1).to_string().dimmed(),
                 package.name.bold(),
                 package.version.green(),
@@ -938,7 +1084,10 @@ async fn handle_search(
             break;
         }
     }
-    let _ = writeln!(std::io::stdout(), "\n💡 Install with: packer install <package_name>");
+    let _ = writeln!(
+        std::io::stdout(),
+        "\n💡 Install with: packer install <package_name>"
+    );
     Ok(())
 }
 async fn handle_info(
@@ -949,7 +1098,9 @@ async fn handle_info(
     _show_rdeps: bool,
     security_info: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let package = package_manager.get_package_info(package_name).await?
+    let package = package_manager
+        .get_package_info(package_name)
+        .await?
         .ok_or_else(|| format!("Package '{}' not found", package_name))?;
     println!("\n{}", "Package Information".bold());
     println!("{}", "=".repeat(60));
@@ -962,7 +1113,10 @@ async fn handle_info(
     println!("URL: {}", package.url);
     println!("Download Size: {}", format_size(package.size));
     println!("Installed Size: {}", format_size(package.installed_size));
-    println!("Build Date: {}", package.build_date.format("%Y-%m-%d %H:%M:%S"));
+    println!(
+        "Build Date: {}",
+        package.build_date.format("%Y-%m-%d %H:%M:%S")
+    );
     if let Some(install_date) = package.install_date {
         println!("Install Date: {}", install_date.format("%Y-%m-%d %H:%M:%S"));
     }
@@ -1012,9 +1166,15 @@ async fn handle_list(
         }
     };
     let filtered_packages = if explicit {
-        packages.into_iter().filter(|p| matches!(p.1, packer::storage::InstallReason::Explicit)).collect()
+        packages
+            .into_iter()
+            .filter(|p| matches!(p.1, packer::storage::InstallReason::Explicit))
+            .collect()
     } else if dependencies {
-        packages.into_iter().filter(|p| matches!(p.1, packer::storage::InstallReason::Dependency)).collect()
+        packages
+            .into_iter()
+            .filter(|p| matches!(p.1, packer::storage::InstallReason::Dependency))
+            .collect()
     } else if orphans {
         find_orphaned_packages(&packages).await?
     } else {
@@ -1022,23 +1182,33 @@ async fn handle_list(
     };
     match format.map(|s| s.as_str()) {
         Some("json") => {
-            let json_output: Vec<_> = filtered_packages.iter()
-                .map(|(pkg, reason)| serde_json::json!({
-                    "name": pkg.name,
-                    "version": pkg.version,
-                    "repository": pkg.repository,
-                    "size": pkg.installed_size,
-                    "install_reason": reason,
-                    "install_date": pkg.install_date
-                }))
+            let json_output: Vec<_> = filtered_packages
+                .iter()
+                .map(|(pkg, reason)| {
+                    serde_json::json!({
+                        "name": pkg.name,
+                        "version": pkg.version,
+                        "repository": pkg.repository,
+                        "size": pkg.installed_size,
+                        "install_reason": reason,
+                        "install_date": pkg.install_date
+                    })
+                })
                 .collect();
             println!("{}", serde_json::to_string_pretty(&json_output)?);
         }
         Some("csv") => {
             println!("Name,Version,Repository,Size,Install Reason,Install Date");
             for (pkg, reason) in filtered_packages {
-                println!("{},{},{},{},{:?},{:?}", 
-                    pkg.name, pkg.version, pkg.repository, pkg.installed_size, reason, pkg.install_date);
+                println!(
+                    "{},{},{},{},{:?},{:?}",
+                    pkg.name,
+                    pkg.version,
+                    pkg.repository,
+                    pkg.installed_size,
+                    reason,
+                    pkg.install_date
+                );
             }
         }
         _ => {
@@ -1056,10 +1226,12 @@ async fn handle_list(
                     packer::storage::InstallReason::Dependency => "dependency",
                     packer::storage::InstallReason::Upgrade => "upgrade",
                 };
-                let install_date = pkg.install_date
+                let install_date = pkg
+                    .install_date
                     .map(|d| d.format("%Y-%m-%d").to_string())
                     .unwrap_or_else(|| "unknown".to_string());
-                println!("📦 {} {} ({}) - {} [{}] - installed {}",
+                println!(
+                    "📦 {} {} ({}) - {} [{}] - installed {}",
                     pkg.name.bold(),
                     pkg.version.green(),
                     pkg.repository.cyan(),
@@ -1119,14 +1291,20 @@ async fn handle_upgrade(
     }
     println!("Available upgrades: {}", available_upgrades.len());
     for (current, newer) in &available_upgrades {
-        println!("  {} {} → {}", 
+        println!(
+            "  {} {} → {}",
             current.name.bold(),
             current.version.yellow(),
             newer.version.green()
         );
     }
-    let package_names: Vec<String> = available_upgrades.iter().map(|(_, newer)| newer.name.clone()).collect();
-    package_manager.upgrade_packages_by_names(package_names, false).await?;
+    let package_names: Vec<String> = available_upgrades
+        .iter()
+        .map(|(_, newer)| newer.name.clone())
+        .collect();
+    package_manager
+        .upgrade_packages_by_names(package_names, false)
+        .await?;
     println!("{}", "✅ Upgrade completed successfully!".green());
     Ok(())
 }
@@ -1141,7 +1319,10 @@ async fn handle_check(
         println!("{}", "✅ No conflicts detected".green());
         return Ok(());
     }
-    println!("{}", format!("⚠️  {} conflicts detected", conflicts.len()).yellow());
+    println!(
+        "{}",
+        format!("⚠️  {} conflicts detected", conflicts.len()).yellow()
+    );
     for conflict in &conflicts {
         println!("Conflict: {}", conflict);
         if verbose {
@@ -1179,20 +1360,26 @@ async fn handle_clean(
         println!("Cleaning package cache...");
         cleaned_size += clean_package_cache(package_manager).await?;
     }
-    println!("{}", format!("✅ Cleaned up {} of disk space", format_size(cleaned_size)).green());
+    println!(
+        "{}",
+        format!("✅ Cleaned up {} of disk space", format_size(cleaned_size)).green()
+    );
     Ok(())
 }
-async fn handle_repos(
-    package_manager: &PackageManager,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn handle_repos(package_manager: &PackageManager) -> Result<(), Box<dyn std::error::Error>> {
     let repos = package_manager.list_repositories().await?;
     println!("Configured Repositories:");
     println!("{}", "=".repeat(60));
     for repo in repos {
-        let status = if repo.enabled { "enabled".green() } else { "disabled".red() };
-        println!("{} [{}] (Priority: {})", 
-            repo.name.bold(), 
-            status, 
+        let status = if repo.enabled {
+            "enabled".green()
+        } else {
+            "disabled".red()
+        };
+        println!(
+            "{} [{}] (Priority: {})",
+            repo.name.bold(),
+            status,
             repo.priority
         );
         println!("  URL: {}", repo.url);
@@ -1211,7 +1398,8 @@ async fn handle_transaction(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match sub_matches.subcommand() {
         Some(("history", history_matches)) => {
-            let limit = history_matches.get_one::<String>("limit")
+            let limit = history_matches
+                .get_one::<String>("limit")
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(20);
             let filter = history_matches.get_one::<String>("filter");
@@ -1220,9 +1408,14 @@ async fn handle_transaction(
             display_transaction_history(limit, filter, package_filter, failed_only).await?;
         }
         Some(("rollback", rollback_matches)) => {
-            let transaction_id = rollback_matches.get_one::<String>("transaction_id").unwrap();
+            let transaction_id = rollback_matches
+                .get_one::<String>("transaction_id")
+                .unwrap();
             let _force = rollback_matches.get_flag("force");
-            println!("Transaction rollback not yet implemented for: {}", transaction_id);
+            println!(
+                "Transaction rollback not yet implemented for: {}",
+                transaction_id
+            );
         }
         Some(("show", show_matches)) => {
             let transaction_id = show_matches.get_one::<String>("transaction_id").unwrap();
@@ -1241,13 +1434,22 @@ async fn handle_security(
     match sub_matches.subcommand() {
         Some(("scan", scan_matches)) => {
             let package_name = scan_matches.get_one::<String>("package").unwrap();
-            println!("{}", format!("🔍 Scanning package: {}", package_name).cyan());
+            println!(
+                "{}",
+                format!("🔍 Scanning package: {}", package_name).cyan()
+            );
             if let Some(package) = package_manager.get_package_info(package_name).await? {
-                let vulnerabilities = package_manager.security_scanner.scan_package(&package).await?;
+                let vulnerabilities = package_manager
+                    .security_scanner
+                    .scan_package(&package)
+                    .await?;
                 if vulnerabilities.is_empty() {
                     println!("{}", "✅ No vulnerabilities found!".green());
                 } else {
-                    println!("{}", format!("⚠️  Found {} vulnerabilities:", vulnerabilities.len()).yellow());
+                    println!(
+                        "{}",
+                        format!("⚠️  Found {} vulnerabilities:", vulnerabilities.len()).yellow()
+                    );
                     for vuln in vulnerabilities {
                         let _severity_color = match vuln.severity {
                             packer::package::VulnerabilitySeverity::Critical => "red",
@@ -1256,17 +1458,20 @@ async fn handle_security(
                             packer::package::VulnerabilitySeverity::Low => "blue",
                             packer::package::VulnerabilitySeverity::Info => "white",
                         };
-                        println!("  • {} [{:?}] - {}", 
-                                vuln.vulnerability_id,
-                                vuln.severity,
-                                vuln.description);
+                        println!(
+                            "  • {} [{:?}] - {}",
+                            vuln.vulnerability_id, vuln.severity, vuln.description
+                        );
                         if let Some(ref fixed_version) = vuln.fixed_version {
                             println!("    Fixed in version: {}", fixed_version.green());
                         }
                     }
                 }
             } else {
-                println!("{}", format!("❌ Package '{}' not found", package_name).red());
+                println!(
+                    "{}",
+                    format!("❌ Package '{}' not found", package_name).red()
+                );
             }
         }
         Some(("audit", audit_matches)) => {
@@ -1282,15 +1487,25 @@ async fn handle_security(
                 println!("Total packages examined: {}", audit_result.total_packages);
                 println!("Vulnerable packages: {}", audit_result.vulnerable_packages);
                 println!("High-risk packages: {}", audit_result.high_risk_packages);
-                println!("Total vulnerabilities: {}", audit_result.total_vulnerabilities);
+                println!(
+                    "Total vulnerabilities: {}",
+                    audit_result.total_vulnerabilities
+                );
                 if detailed && !audit_result.reports.is_empty() {
                     println!("\n{}", "Detailed Vulnerability Reports:".bold());
                     for report in audit_result.reports {
-                        println!("\n📦 Package: {} {}", report.package_name.bold(), report.version);
+                        println!(
+                            "\n📦 Package: {} {}",
+                            report.package_name.bold(),
+                            report.version
+                        );
                         println!("Risk Score: {:.1}/10", report.risk_score);
                         println!("Recommendation: {}", report.recommendation);
                         for vuln in report.vulnerabilities {
-                            println!("  • {} [{:?}] - {}", vuln.id, vuln.severity, vuln.description);
+                            println!(
+                                "  • {} [{:?}] - {}",
+                                vuln.id, vuln.severity, vuln.description
+                            );
                             if let Some(ref cve) = vuln.cve_id {
                                 println!("    CVE: {}", cve);
                             }
@@ -1306,27 +1521,42 @@ async fn handle_security(
                 if audit_result.vulnerable_packages == 0 {
                     println!("\n{}", "✅ No security issues found!".green());
                 } else {
-                    println!("\n{}", "⚠️  Security issues detected. Review recommendations above.".yellow());
+                    println!(
+                        "\n{}",
+                        "⚠️  Security issues detected. Review recommendations above.".yellow()
+                    );
                 }
             }
         }
         Some(("import-keys", import_matches)) => {
             let keyserver = import_matches.get_one::<String>("keyserver").unwrap();
-            let key_ids: Vec<String> = import_matches.get_many::<String>("keys")
+            let key_ids: Vec<String> = import_matches
+                .get_many::<String>("keys")
                 .unwrap()
                 .map(|s| s.to_string())
                 .collect();
-            println!("{}", format!("🔐 Importing {} GPG keys from {}...", key_ids.len(), keyserver).cyan());
+            println!(
+                "{}",
+                format!(
+                    "🔐 Importing {} GPG keys from {}...",
+                    key_ids.len(),
+                    keyserver
+                )
+                .cyan()
+            );
             let imported_keys = package_manager.import_gpg_keys(&key_ids).await?;
             if imported_keys.is_empty() {
                 println!("{}", "❌ Failed to import any keys".red());
             } else {
-                println!("{}", format!("✅ Successfully imported {} keys:", imported_keys.len()).green());
+                println!(
+                    "{}",
+                    format!("✅ Successfully imported {} keys:", imported_keys.len()).green()
+                );
                 for key in imported_keys {
-                    println!("  • {} - {} (Trust: {})", 
-                            key.id, 
-                            key.user_id, 
-                            key.trust_level);
+                    println!(
+                        "  • {} - {} (Trust: {})",
+                        key.id, key.user_id, key.trust_level
+                    );
                     if let Some(expires) = key.expires {
                         println!("    Expires: {}", expires.format("%Y-%m-%d"));
                     }
@@ -1337,34 +1567,77 @@ async fn handle_security(
             let verbose = status_matches.get_flag("verbose");
             println!("{}", "🔐 Security System Status".bold().cyan());
             println!("{}", "=".repeat(40));
-            
+
             let gpg_status = package_manager.get_gpg_status().await?;
             println!("{}", gpg_status);
-            
+
             if verbose {
                 println!("\n📋 Configuration Details:");
-                println!("  • Verify checksums: {}", package_manager.config.verify_checksums);
-                println!("  • Verify signatures: {}", package_manager.config.verify_signatures);
-                println!("  • Allow untrusted repos: {}", package_manager.config.security_policy.allow_untrusted_repos);
-                println!("  • Scan for vulnerabilities: {}", package_manager.config.security_policy.scan_for_vulnerabilities);
-                println!("  • Block high-risk packages: {}", package_manager.config.security_policy.block_high_risk_packages);
-                println!("  • Max package size (MB): {}", package_manager.config.security_policy.max_package_size_mb);
-                println!("  • Allowed protocols: {:?}", package_manager.config.security_policy.allowed_protocols);
-                
+                println!(
+                    "  • Verify checksums: {}",
+                    package_manager.config.verify_checksums
+                );
+                println!(
+                    "  • Verify signatures: {}",
+                    package_manager.config.verify_signatures
+                );
+                println!(
+                    "  • Allow untrusted repos: {}",
+                    package_manager.config.security_policy.allow_untrusted_repos
+                );
+                println!(
+                    "  • Scan for vulnerabilities: {}",
+                    package_manager
+                        .config
+                        .security_policy
+                        .scan_for_vulnerabilities
+                );
+                println!(
+                    "  • Block high-risk packages: {}",
+                    package_manager
+                        .config
+                        .security_policy
+                        .block_high_risk_packages
+                );
+                println!(
+                    "  • Max package size (MB): {}",
+                    package_manager.config.security_policy.max_package_size_mb
+                );
+                println!(
+                    "  • Allowed protocols: {:?}",
+                    package_manager.config.security_policy.allowed_protocols
+                );
+
                 println!("\n🔧 System Information:");
-                println!("  • Database path: {:?}", package_manager.config.database_dir);
+                println!(
+                    "  • Database path: {:?}",
+                    package_manager.config.database_dir
+                );
                 println!("  • Cache path: {:?}", package_manager.config.cache_dir);
-                println!("  • Install root: {:?}", package_manager.config.install_root);
+                println!(
+                    "  • Install root: {:?}",
+                    package_manager.config.install_root
+                );
             }
         }
         Some(("update-db", _)) => {
             println!("{}", "🔄 Updating vulnerability database...".cyan());
-            match package_manager.security_scanner.update_vulnerability_database().await {
+            match package_manager
+                .security_scanner
+                .update_vulnerability_database()
+                .await
+            {
                 Ok(_) => {
-                    println!("{}", "✅ Vulnerability database updated successfully".green());
+                    println!(
+                        "{}",
+                        "✅ Vulnerability database updated successfully".green()
+                    );
                 }
                 Err(e) => {
-                    println!("{}", format!("❌ Failed to update vulnerability database: {}", e).red());
+                    println!(
+                        "{}",
+                        format!("❌ Failed to update vulnerability database: {}", e).red()
+                    );
                     return Err(e.into());
                 }
             }
@@ -1456,7 +1729,10 @@ async fn handle_doctor(
                         }
                     }
                     if !detected_packages.is_empty() {
-                        println!("✅ Detected {} potentially installed packages:", detected_packages.len());
+                        println!(
+                            "✅ Detected {} potentially installed packages:",
+                            detected_packages.len()
+                        );
                         for pkg in &detected_packages {
                             println!("  - {}", pkg);
                         }
@@ -1489,7 +1765,8 @@ async fn handle_doctor(
     let repos = package_manager.list_repositories().await?;
     for repo in repos {
         if repo.enabled {
-            println!("  {} {} - {}", 
+            println!(
+                "  {} {} - {}",
                 if repo.enabled { "✅" } else { "❌" },
                 repo.name.bold(),
                 if repo.enabled { "enabled" } else { "disabled" }
@@ -1499,8 +1776,9 @@ async fn handle_doctor(
     let cache_dir = package_manager.get_cache_dir();
     if cache_dir.exists() {
         let cache_size = get_directory_size(&cache_dir).await?;
-        println!("\n💾 Cache directory: {} ({})", 
-            cache_dir.display(), 
+        println!(
+            "\n💾 Cache directory: {} ({})",
+            cache_dir.display(),
             format_size(cache_size)
         );
         if fix && cache_size > 100 * 1024 * 1024 {
@@ -1510,13 +1788,20 @@ async fn handle_doctor(
         println!("\n💾 Cache directory: {} (not found)", cache_dir.display());
     }
     println!("\n🏠 Install root: {}", package_manager.get_install_root());
-    println!("📄 Database path: {}", package_manager.get_database_path().display());
+    println!(
+        "📄 Database path: {}",
+        package_manager.get_database_path().display()
+    );
     if !fix {
         println!("\n💡 Run with --fix to attempt automatic repairs");
     }
     Ok(())
 }
-fn get_directory_size(dir: &std::path::Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, Box<dyn std::error::Error>>> + '_>> {
+fn get_directory_size(
+    dir: &std::path::Path,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<u64, Box<dyn std::error::Error>>> + '_>,
+> {
     Box::pin(async move {
         let mut total_size = 0u64;
         let mut entries = tokio::fs::read_dir(dir).await?;
@@ -1568,31 +1853,47 @@ async fn handle_version(
             println!("\n{}", format!("📦 Package: {}", package_name).bold());
             println!("{}", "=".repeat(50));
             println!("📋 Installed Version: {}", installed_pkg.version.green());
-            println!("📅 Install Date: {}", installed_pkg.install_date.map_or("Unknown".to_string(), |d| d.format("%Y-%m-%d %H:%M:%S").to_string()));
+            println!(
+                "📅 Install Date: {}",
+                installed_pkg
+                    .install_date
+                    .map_or("Unknown".to_string(), |d| d
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string())
+            );
             println!("🏪 Repository: {}", installed_pkg.repository.yellow());
             println!("💾 Size: {}", format_size(installed_pkg.installed_size));
             if available {
                 println!("\n{}", "🔍 Available Versions:".bold());
                 if let Some(newer) = package_manager.check_package_upgrade(package_name).await? {
-                    println!("  {} {} -> {} (Upgrade available)", 
-                             "⬆️".green(), 
-                             installed_pkg.version, 
-                             newer.version.green());
+                    println!(
+                        "  {} {} -> {} (Upgrade available)",
+                        "⬆️".green(),
+                        installed_pkg.version,
+                        newer.version.green()
+                    );
                 } else {
                     println!("  ✅ Up to date");
                 }
             }
             if history {
                 println!("\n{}", "📜 Version History:".bold());
-                let transactions = package_manager.database.get_transactions_by_package(package_name);
+                let transactions = package_manager
+                    .database
+                    .get_transactions_by_package(package_name);
                 for transaction in transactions.iter().take(5) {
                     let status = if transaction.success { "✅" } else { "❌" };
-                    println!("  {} {} - {:?} - {}", 
-                             status,
-                             transaction.timestamp.format("%Y-%m-%d %H:%M:%S"),
-                             transaction.transaction_type,
-                             transaction.packages.iter().find(|p| p.name == *package_name)
-                                .map_or("Unknown".to_string(), |p| p.version.clone()));
+                    println!(
+                        "  {} {} - {:?} - {}",
+                        status,
+                        transaction.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                        transaction.transaction_type,
+                        transaction
+                            .packages
+                            .iter()
+                            .find(|p| p.name == *package_name)
+                            .map_or("Unknown".to_string(), |p| p.version.clone())
+                    );
                 }
             }
         } else {
@@ -1605,16 +1906,25 @@ async fn handle_version(
         println!("🏗️  Build: {}", "release".yellow());
         println!("🦀 Rust Version: {}", "1.80+");
         println!("🏠 Install Root: {}", package_manager.get_install_root());
-        println!("💾 Database: {}", package_manager.get_database_path().display());
+        println!(
+            "💾 Database: {}",
+            package_manager.get_database_path().display()
+        );
         println!("📦 Cache: {}", package_manager.get_cache_dir().display());
         let installed_packages = package_manager.list_installed_packages().await?;
         println!("\n{}", "📊 Package Statistics:".bold());
         println!("  Total Packages: {}", installed_packages.len());
-        let explicit_count = installed_packages.iter().filter(|(_, reason)| matches!(reason, packer::storage::InstallReason::Explicit)).count();
+        let explicit_count = installed_packages
+            .iter()
+            .filter(|(_, reason)| matches!(reason, packer::storage::InstallReason::Explicit))
+            .count();
         let dependency_count = installed_packages.len() - explicit_count;
         println!("  Explicitly Installed: {}", explicit_count);
         println!("  Dependencies: {}", dependency_count);
-        let total_size: u64 = installed_packages.iter().map(|(pkg, _)| pkg.installed_size).sum();
+        let total_size: u64 = installed_packages
+            .iter()
+            .map(|(pkg, _)| pkg.installed_size)
+            .sum();
         println!("  Total Size: {}", format_size(total_size));
         let transactions = package_manager.database.get_transaction_history(Some(10));
         println!("  Recent Transactions: {}", transactions.len());
@@ -1626,7 +1936,12 @@ async fn handle_version(
             } else {
                 println!("  ⬆️ {} packages can be upgraded", upgrades.len());
                 for (old, new) in upgrades.iter().take(5) {
-                    println!("    {} {} -> {}", old.name, old.version, new.version.green());
+                    println!(
+                        "    {} {} -> {}",
+                        old.name,
+                        old.version,
+                        new.version.green()
+                    );
                 }
                 if upgrades.len() > 5 {
                     println!("    ... and {} more", upgrades.len() - 5);
@@ -1645,11 +1960,20 @@ async fn handle_versions(
     println!("Available versions for '{}':", package_name.bold());
     println!("{}", "=".repeat(50));
     let packages = if all_repos {
-        package_manager.repository_manager.search_packages(package_name, true).await?
+        package_manager
+            .repository_manager
+            .search_packages(package_name, true)
+            .await?
     } else if let Some(repo) = repository {
-        package_manager.repository_manager.search_packages_in_repo(package_name, repo).await?
+        package_manager
+            .repository_manager
+            .search_packages_in_repo(package_name, repo)
+            .await?
     } else {
-        package_manager.repository_manager.search_packages(package_name, true).await?
+        package_manager
+            .repository_manager
+            .search_packages(package_name, true)
+            .await?
     };
     if packages.is_empty() {
         println!("{}", "No versions found for this package.".yellow());
@@ -1661,13 +1985,15 @@ async fn handle_versions(
         compare_versions(&a.version, &b.version).unwrap_or(std::cmp::Ordering::Equal)
     });
     for (index, pkg) in sorted_packages.iter().enumerate() {
-        println!("  {} {} {} (from {})",
+        println!(
+            "  {} {} {} (from {})",
             format!("{}.", index + 1).dimmed(),
             pkg.name.bold(),
             pkg.version.green(),
             pkg.repository.cyan()
         );
-        println!("    {} | {} | {}",
+        println!(
+            "    {} | {} | {}",
             pkg.repository.cyan(),
             format_size(pkg.size),
             pkg.description
@@ -1675,7 +2001,9 @@ async fn handle_versions(
     }
     Ok(())
 }
-async fn clean_package_cache(package_manager: &PackageManager) -> Result<u64, Box<dyn std::error::Error>> {
+async fn clean_package_cache(
+    package_manager: &PackageManager,
+) -> Result<u64, Box<dyn std::error::Error>> {
     let cache_dir = package_manager.get_cache_dir();
     let mut cleaned_size = 0u64;
     if cache_dir.exists() {
@@ -1728,7 +2056,10 @@ async fn clean_log_files() -> Result<u64, Box<dyn std::error::Error>> {
 }
 async fn find_orphaned_packages(
     packages: &[(packer::package::Package, packer::storage::InstallReason)],
-) -> Result<Vec<(packer::package::Package, packer::storage::InstallReason)>, Box<dyn std::error::Error>> {
+) -> Result<
+    Vec<(packer::package::Package, packer::storage::InstallReason)>,
+    Box<dyn std::error::Error>,
+> {
     let mut orphaned = Vec::new();
     for (package, reason) in packages {
         if matches!(reason, packer::storage::InstallReason::Dependency) {
@@ -1761,9 +2092,15 @@ async fn display_transaction_history(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load(None)?;
     let package_manager = PackageManager::new(config).await?;
-    let mut transactions = package_manager.database.get_transaction_history(Some(limit));
+    let mut transactions = package_manager
+        .database
+        .get_transaction_history(Some(limit));
     if let Some(filter_type) = filter {
-        transactions.retain(|t| format!("{:?}", t.transaction_type).to_lowercase().contains(&filter_type.to_lowercase()));
+        transactions.retain(|t| {
+            format!("{:?}", t.transaction_type)
+                .to_lowercase()
+                .contains(&filter_type.to_lowercase())
+        });
     }
     if let Some(package_name) = package_filter {
         transactions.retain(|t| t.packages.iter().any(|p| p.name.contains(package_name)));
@@ -1778,14 +2115,19 @@ async fn display_transaction_history(
     println!("\n{}", "📋 Transaction History".bold());
     println!("{}", "=".repeat(80));
     for (i, transaction) in transactions.iter().enumerate() {
-        let status = if transaction.success { "✅ Success".green() } else { "❌ Failed".red() };
+        let status = if transaction.success {
+            "✅ Success".green()
+        } else {
+            "❌ Failed".red()
+        };
         let duration_str = format!("{}s", transaction.duration);
         let size_change = if transaction.size_change >= 0 {
             format!("+{}", format_size(transaction.size_change as u64)).green()
         } else {
             format!("-{}", format_size((-transaction.size_change) as u64)).red()
         };
-        println!("{} | {} | {:?} | {} | {} | {}",
+        println!(
+            "{} | {} | {:?} | {} | {} | {}",
             transaction.timestamp.format("%Y-%m-%d %H:%M:%S"),
             transaction.id[..8].to_string().cyan(),
             transaction.transaction_type,
@@ -1793,34 +2135,58 @@ async fn display_transaction_history(
             duration_str.yellow(),
             size_change
         );
-        let package_names: Vec<String> = transaction.packages.iter().map(|p| p.name.clone()).collect();
+        let package_names: Vec<String> = transaction
+            .packages
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
         println!("  📦 Packages: {}", package_names.join(", "));
-        println!("  👤 User: {} | 🛡️ Security: {:.1}/100", transaction.user, transaction.security_score);
+        println!(
+            "  👤 User: {} | 🛡️ Security: {:.1}/100",
+            transaction.user, transaction.security_score
+        );
         if let Some(ref error) = transaction.error_message {
             println!("  ❌ Error: {}", error.red());
         }
-        if transaction.rollback_info.as_ref().map_or(false, |r| r.can_rollback) {
+        if transaction
+            .rollback_info
+            .as_ref()
+            .map_or(false, |r| r.can_rollback)
+        {
             println!("  🔄 Rollback: Available");
         }
         if i < transactions.len() - 1 {
             println!();
         }
     }
-    println!("\n{}", format!("Total transactions: {}", transactions.len()).bold());
+    println!(
+        "\n{}",
+        format!("Total transactions: {}", transactions.len()).bold()
+    );
     Ok(())
 }
 async fn show_transaction_details(transaction_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load(None)?;
     let package_manager = PackageManager::new(config).await?;
-    if let Some(transaction) = package_manager.database.get_transaction_by_id(transaction_id) {
+    if let Some(transaction) = package_manager
+        .database
+        .get_transaction_by_id(transaction_id)
+    {
         println!("\n{}", "📋 Transaction Details".bold());
         println!("{}", "=".repeat(80));
         println!("🆔 Transaction ID: {}", transaction.id.cyan());
-        println!("📅 Timestamp: {}", transaction.timestamp.format("%Y-%m-%d %H:%M:%S"));
+        println!(
+            "📅 Timestamp: {}",
+            transaction.timestamp.format("%Y-%m-%d %H:%M:%S")
+        );
         println!("🔄 Type: {:?}", transaction.transaction_type);
         println!("👤 User: {}", transaction.user);
         println!("⏱️ Duration: {}s", transaction.duration);
-        let status = if transaction.success { "✅ Success".green() } else { "❌ Failed".red() };
+        let status = if transaction.success {
+            "✅ Success".green()
+        } else {
+            "❌ Failed".red()
+        };
         println!("📊 Status: {}", status);
         let size_change = if transaction.size_change >= 0 {
             format!("+{}", format_size(transaction.size_change as u64)).green()
@@ -1837,19 +2203,23 @@ async fn show_transaction_details(transaction_id: &str) -> Result<(), Box<dyn st
             let operation_str = match &pkg.operation {
                 PackageOperation::Install => "Install".green(),
                 PackageOperation::Remove => "Remove".red(),
-                PackageOperation::Upgrade { from_version } => 
-                    format!("Upgrade from {}", from_version).yellow(),
-                PackageOperation::Downgrade { from_version } => 
-                    format!("Downgrade from {}", from_version).yellow(),
+                PackageOperation::Upgrade { from_version } => {
+                    format!("Upgrade from {}", from_version).yellow()
+                }
+                PackageOperation::Downgrade { from_version } => {
+                    format!("Downgrade from {}", from_version).yellow()
+                }
                 PackageOperation::Reinstall => "Reinstall".blue(),
             };
-            println!("  {}. {} {} [{}] - {} ({})", 
-                     i + 1,
-                     pkg.name.bold(),
-                     pkg.version.cyan(),
-                     pkg.repository.yellow(),
-                     operation_str,
-                     format_size(pkg.size));
+            println!(
+                "  {}. {} {} [{}] - {} ({})",
+                i + 1,
+                pkg.name.bold(),
+                pkg.version.cyan(),
+                pkg.repository.yellow(),
+                operation_str,
+                format_size(pkg.size)
+            );
             if !pkg.dependencies.is_empty() {
                 println!("     Dependencies: {}", pkg.dependencies.join(", "));
             }
@@ -1862,15 +2232,31 @@ async fn show_transaction_details(transaction_id: &str) -> Result<(), Box<dyn st
         }
         if let Some(ref rollback_info) = transaction.rollback_info {
             println!("\n{}", "🔄 Rollback Information:".bold());
-            println!("  Can Rollback: {}", if rollback_info.can_rollback { "Yes".green() } else { "No".red() });
+            println!(
+                "  Can Rollback: {}",
+                if rollback_info.can_rollback {
+                    "Yes".green()
+                } else {
+                    "No".red()
+                }
+            );
             if !rollback_info.affected_packages.is_empty() {
-                println!("  Affected Packages: {}", rollback_info.affected_packages.join(", "));
+                println!(
+                    "  Affected Packages: {}",
+                    rollback_info.affected_packages.join(", ")
+                );
             }
             if !rollback_info.dependencies_to_restore.is_empty() {
-                println!("  Dependencies to Restore: {}", rollback_info.dependencies_to_restore.join(", "));
+                println!(
+                    "  Dependencies to Restore: {}",
+                    rollback_info.dependencies_to_restore.join(", ")
+                );
             }
             if !rollback_info.rollback_commands.is_empty() {
-                println!("  Rollback Commands: {} available", rollback_info.rollback_commands.len());
+                println!(
+                    "  Rollback Commands: {} available",
+                    rollback_info.rollback_commands.len()
+                );
             }
         }
     } else {
@@ -1879,26 +2265,31 @@ async fn show_transaction_details(transaction_id: &str) -> Result<(), Box<dyn st
     Ok(())
 }
 
-
 async fn handle_enhanced_scan(
     package_manager: &PackageManager,
     scan_matches: &ArgMatches,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use packer::security_enhancements::AdvancedSecurityScanner;
-    
+
     let package_name = scan_matches.get_one::<String>("package").unwrap();
     let json_output = scan_matches.get_flag("json");
     let include_threat_intel = scan_matches.get_flag("threat-intel");
-    
-    println!("{}", format!("🔍 Enhanced security scan for package: {}", package_name).cyan());
-    
+
+    println!(
+        "{}",
+        format!("🔍 Enhanced security scan for package: {}", package_name).cyan()
+    );
+
     if let Some(package) = package_manager.get_package_info(package_name).await? {
         let enhanced_scanner = AdvancedSecurityScanner::new(package_manager.config.clone());
-        
+
         if let Err(e) = enhanced_scanner.initialize_feeds().await {
-            println!("{}", format!("Warning: Failed to initialize feeds: {}", e).yellow());
+            println!(
+                "{}",
+                format!("Warning: Failed to initialize feeds: {}", e).yellow()
+            );
         }
-        
+
         match enhanced_scanner.enhanced_scan_package(&package).await {
             Ok(scan_result) => {
                 if json_output {
@@ -1906,17 +2297,39 @@ async fn handle_enhanced_scan(
                 } else {
                     println!("\n{}", "Enhanced Security Scan Results".bold());
                     println!("{}", "=".repeat(60));
-                    println!("Package: {} {}", scan_result.package_name.bold(), scan_result.package_version);
-                    println!("Scan Time: {}", scan_result.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC"));
-                    
+                    println!(
+                        "Package: {} {}",
+                        scan_result.package_name.bold(),
+                        scan_result.package_version
+                    );
+                    println!(
+                        "Scan Time: {}",
+                        scan_result.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+                    );
+
                     // Risk Score
                     println!("\n{}", "Risk Assessment".bold());
-                    println!("Overall Risk Score: {:.2}/1.0", scan_result.risk_score.overall_score);
-                    println!("  CVSS Component: {:.2}", scan_result.risk_score.cvss_component);
-                    println!("  EPSS Component: {:.2}", scan_result.risk_score.epss_component);
-                    println!("  Exploit Component: {:.2}", scan_result.risk_score.exploit_component);
-                    println!("  Threat Intel Component: {:.2}", scan_result.risk_score.threat_intel_component);
-                    
+                    println!(
+                        "Overall Risk Score: {:.2}/1.0",
+                        scan_result.risk_score.overall_score
+                    );
+                    println!(
+                        "  CVSS Component: {:.2}",
+                        scan_result.risk_score.cvss_component
+                    );
+                    println!(
+                        "  EPSS Component: {:.2}",
+                        scan_result.risk_score.epss_component
+                    );
+                    println!(
+                        "  Exploit Component: {:.2}",
+                        scan_result.risk_score.exploit_component
+                    );
+                    println!(
+                        "  Threat Intel Component: {:.2}",
+                        scan_result.risk_score.threat_intel_component
+                    );
+
                     // Vulnerabilities
                     if !scan_result.vulnerabilities.is_empty() {
                         println!("\n{}", "Vulnerabilities Found".bold());
@@ -1933,21 +2346,30 @@ async fn handle_enhanced_scan(
                                 println!("    {} Exploit Available", "⚠️".red());
                             }
                             if !vuln.fixed_versions.is_empty() {
-                                println!("    Fixed in: {}", vuln.fixed_versions.join(", ").green());
+                                println!(
+                                    "    Fixed in: {}",
+                                    vuln.fixed_versions.join(", ").green()
+                                );
                             }
                         }
                     }
-                    
+
                     // Active Threats
                     if include_threat_intel && !scan_result.active_threats.is_empty() {
                         println!("\n{}", "Active Threats".bold());
                         for threat in &scan_result.active_threats {
                             println!("  • {} [{:?}]", threat.name, threat.severity);
-                            println!("    First Observed: {}", threat.first_observed.format("%Y-%m-%d"));
-                            println!("    Last Activity: {}", threat.last_activity.format("%Y-%m-%d"));
+                            println!(
+                                "    First Observed: {}",
+                                threat.first_observed.format("%Y-%m-%d")
+                            );
+                            println!(
+                                "    Last Activity: {}",
+                                threat.last_activity.format("%Y-%m-%d")
+                            );
                         }
                     }
-                    
+
                     // Recommendations
                     if !scan_result.recommendations.is_empty() {
                         println!("\n{}", "Security Recommendations".bold());
@@ -1963,22 +2385,36 @@ async fn handle_enhanced_scan(
                             }
                         }
                     }
-                    
+
                     // Summary
                     if scan_result.vulnerabilities.is_empty() {
                         println!("\n{}", "✅ No vulnerabilities found!".green());
                     } else {
-                        let critical_count = scan_result.vulnerabilities.iter()
-                            .filter(|v| matches!(v.severity, packer::package::VulnerabilitySeverity::Critical))
+                        let critical_count = scan_result
+                            .vulnerabilities
+                            .iter()
+                            .filter(|v| {
+                                matches!(
+                                    v.severity,
+                                    packer::package::VulnerabilitySeverity::Critical
+                                )
+                            })
                             .count();
-                        let high_count = scan_result.vulnerabilities.iter()
-                            .filter(|v| matches!(v.severity, packer::package::VulnerabilitySeverity::High))
+                        let high_count = scan_result
+                            .vulnerabilities
+                            .iter()
+                            .filter(|v| {
+                                matches!(v.severity, packer::package::VulnerabilitySeverity::High)
+                            })
                             .count();
-                        
+
                         if critical_count > 0 || high_count > 0 {
                             println!("\n{}", "⚠️  High-risk vulnerabilities detected. Immediate action recommended.".red());
                         } else {
-                            println!("\n{}", "⚠️  Vulnerabilities found. Review recommendations above.".yellow());
+                            println!(
+                                "\n{}",
+                                "⚠️  Vulnerabilities found. Review recommendations above.".yellow()
+                            );
                         }
                     }
                 }
@@ -1988,9 +2424,12 @@ async fn handle_enhanced_scan(
             }
         }
     } else {
-        println!("{}", format!("❌ Package '{}' not found", package_name).red());
+        println!(
+            "{}",
+            format!("❌ Package '{}' not found", package_name).red()
+        );
     }
-    
+
     Ok(())
 }
 
@@ -1999,26 +2438,35 @@ async fn handle_threat_intel(
     intel_matches: &ArgMatches,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use packer::security_enhancements::AdvancedSecurityScanner;
-    
+
     let specific_feed = intel_matches.get_one::<String>("feed");
-    
+
     println!("{}", "🔄 Updating threat intelligence feeds...".cyan());
-    
+
     let enhanced_scanner = AdvancedSecurityScanner::new(package_manager.config.clone());
-    
+
     if let Err(e) = enhanced_scanner.initialize_feeds().await {
-        println!("{}", format!("Warning: Failed to initialize feeds: {}", e).yellow());
+        println!(
+            "{}",
+            format!("Warning: Failed to initialize feeds: {}", e).yellow()
+        );
     }
-    
+
     match specific_feed {
         Some(feed_name) => {
             println!("{}", format!("Updating specific feed: {}", feed_name));
             match enhanced_scanner.update_feed(feed_name).await {
                 Ok(_) => {
-                    println!("{}", format!("✅ Successfully updated {} feed", feed_name).green());
+                    println!(
+                        "{}",
+                        format!("✅ Successfully updated {} feed", feed_name).green()
+                    );
                 }
                 Err(e) => {
-                    println!("{}", format!("❌ Failed to update {} feed: {}", feed_name, e).red());
+                    println!(
+                        "{}",
+                        format!("❌ Failed to update {} feed: {}", feed_name, e).red()
+                    );
                     return Err(e.into());
                 }
             }
@@ -2027,16 +2475,22 @@ async fn handle_threat_intel(
             println!("Updating all threat intelligence feeds...");
             match enhanced_scanner.update_all_feeds().await {
                 Ok(_) => {
-                    println!("{}", "✅ All threat intelligence feeds updated successfully".green());
+                    println!(
+                        "{}",
+                        "✅ All threat intelligence feeds updated successfully".green()
+                    );
                 }
                 Err(e) => {
-                    println!("{}", format!("❌ Failed to update threat intelligence feeds: {}", e).red());
+                    println!(
+                        "{}",
+                        format!("❌ Failed to update threat intelligence feeds: {}", e).red()
+                    );
                     return Err(e.into());
                 }
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -2044,35 +2498,52 @@ async fn handle_risk_assessment(
     package_manager: &PackageManager,
     risk_matches: &ArgMatches,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use packer::security_enhancements::AdvancedSecurityScanner;
     use packer::package::SystemContext;
-    
+    use packer::security_enhancements::AdvancedSecurityScanner;
+
     let package_name = risk_matches.get_one::<String>("package").unwrap();
     let environment = risk_matches.get_one::<String>("environment").unwrap();
-    
-    println!("{}", format!("🔍 Comprehensive risk assessment for package: {}", package_name).cyan());
-    
+
+    println!(
+        "{}",
+        format!(
+            "🔍 Comprehensive risk assessment for package: {}",
+            package_name
+        )
+        .cyan()
+    );
+
     if let Some(package) = package_manager.get_package_info(package_name).await? {
         let enhanced_scanner = AdvancedSecurityScanner::new(package_manager.config.clone());
-        
+
         if let Err(e) = enhanced_scanner.initialize_feeds().await {
-            println!("{}", format!("Warning: Failed to initialize feeds: {}", e).yellow());
+            println!(
+                "{}",
+                format!("Warning: Failed to initialize feeds: {}", e).yellow()
+            );
         }
-        
+
         let _system_context = match environment.as_str() {
             "development" => SystemContext::new_development_environment(),
             "production" => SystemContext::new_production_environment(),
             _ => SystemContext::new_production_environment(),
         };
-        
+
         match enhanced_scanner.enhanced_scan_package(&package).await {
             Ok(scan_result) => {
                 println!("\n{}", "Comprehensive Risk Assessment".bold());
                 println!("{}", "=".repeat(60));
-                println!("Package: {} {}", scan_result.package_name.bold(), scan_result.package_version);
+                println!(
+                    "Package: {} {}",
+                    scan_result.package_name.bold(),
+                    scan_result.package_version
+                );
                 println!("Environment: {}", environment);
-                println!("Assessment Time: {}", scan_result.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC"));
-                
+                println!(
+                    "Assessment Time: {}",
+                    scan_result.scan_timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+                );
+
                 // Risk Score Breakdown
                 println!("\n{}", "Risk Score Breakdown".bold());
                 let overall_risk = scan_result.risk_score.overall_score;
@@ -2087,29 +2558,67 @@ async fn handle_risk_assessment(
                 } else {
                     "MINIMAL".green()
                 };
-                
-                println!("Overall Risk Level: {} ({:.2}/1.0)", risk_level, overall_risk);
+
+                println!(
+                    "Overall Risk Level: {} ({:.2}/1.0)",
+                    risk_level, overall_risk
+                );
                 println!("Risk Components:");
-                println!("  • CVSS Base Score: {:.2}", scan_result.risk_score.cvss_component);
-                println!("  • Exploit Probability: {:.2}", scan_result.risk_score.epss_component);
-                println!("  • Exploit Availability: {:.2}", scan_result.risk_score.exploit_component);
-                println!("  • Threat Intelligence: {:.2}", scan_result.risk_score.threat_intel_component);
-                println!("  • Business Impact: {:.2}", scan_result.risk_score.business_impact_component);
-                println!("  • Temporal Factors: {:.2}", scan_result.risk_score.temporal_component);
-                println!("Confidence Level: {:.1}%", scan_result.risk_score.confidence * 100.0);
-                
+                println!(
+                    "  • CVSS Base Score: {:.2}",
+                    scan_result.risk_score.cvss_component
+                );
+                println!(
+                    "  • Exploit Probability: {:.2}",
+                    scan_result.risk_score.epss_component
+                );
+                println!(
+                    "  • Exploit Availability: {:.2}",
+                    scan_result.risk_score.exploit_component
+                );
+                println!(
+                    "  • Threat Intelligence: {:.2}",
+                    scan_result.risk_score.threat_intel_component
+                );
+                println!(
+                    "  • Business Impact: {:.2}",
+                    scan_result.risk_score.business_impact_component
+                );
+                println!(
+                    "  • Temporal Factors: {:.2}",
+                    scan_result.risk_score.temporal_component
+                );
+                println!(
+                    "Confidence Level: {:.1}%",
+                    scan_result.risk_score.confidence * 100.0
+                );
+
                 // Summary
                 println!("\n{}", "Assessment Summary".bold());
                 if overall_risk >= 0.8 {
                     println!("{}", "🚨 CRITICAL RISK: Immediate action required. Consider removing this package.".red());
                 } else if overall_risk >= 0.6 {
-                    println!("{}", "⚠️  HIGH RISK: Urgent attention needed. Review security measures.".magenta());
+                    println!(
+                        "{}",
+                        "⚠️  HIGH RISK: Urgent attention needed. Review security measures."
+                            .magenta()
+                    );
                 } else if overall_risk >= 0.4 {
-                    println!("{}", "📋 MEDIUM RISK: Monitor closely and apply recommended mitigations.".yellow());
+                    println!(
+                        "{}",
+                        "📋 MEDIUM RISK: Monitor closely and apply recommended mitigations."
+                            .yellow()
+                    );
                 } else if overall_risk >= 0.2 {
-                    println!("{}", "ℹ️  LOW RISK: Standard monitoring and maintenance sufficient.".blue());
+                    println!(
+                        "{}",
+                        "ℹ️  LOW RISK: Standard monitoring and maintenance sufficient.".blue()
+                    );
                 } else {
-                    println!("{}", "✅ MINIMAL RISK: Package appears secure for this environment.".green());
+                    println!(
+                        "{}",
+                        "✅ MINIMAL RISK: Package appears secure for this environment.".green()
+                    );
                 }
             }
             Err(e) => {
@@ -2117,9 +2626,11 @@ async fn handle_risk_assessment(
             }
         }
     } else {
-        println!("{}", format!("❌ Package '{}' not found", package_name).red());
+        println!(
+            "{}",
+            format!("❌ Package '{}' not found", package_name).red()
+        );
     }
-    
+
     Ok(())
 }
- 

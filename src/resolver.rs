@@ -5,10 +5,10 @@ use crate::{
     repository::RepositoryManager,
 };
 use log::{debug, info, warn};
+use parking_lot::RwLock;
 use semver::{Version, VersionReq};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use parking_lot::RwLock;
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -336,21 +336,29 @@ impl DependencyResolver {
         installed_packages: &[Package],
     ) -> PackerResult<ResolutionResult> {
         let start_time = std::time::Instant::now();
-        info!("Starting advanced dependency resolution for {} packages", packages.len());
+        info!(
+            "Starting advanced dependency resolution for {} packages",
+            packages.len()
+        );
         let cache_key = self.generate_cache_key(packages);
         if let Some(cached_result) = self.resolution_cache.read().get(&cache_key) {
             debug!("Using cached resolution result");
             return Ok(cached_result.clone());
         }
         self.clear_solver_state();
-        let candidate_packages = self.discover_all_candidates(packages, repository_manager).await?;
+        let candidate_packages = self
+            .discover_all_candidates(packages, repository_manager)
+            .await?;
         self.build_constraint_system(&candidate_packages, installed_packages)?;
         let solution = self.solve_constraints()?;
         let selected_packages = self.extract_selected_packages(solution, &candidate_packages)?;
-        let optimized_packages = self.optimize_selection(selected_packages, repository_manager).await?;
+        let optimized_packages = self
+            .optimize_selection(selected_packages, repository_manager)
+            .await?;
         let conflicts = self.detect_advanced_conflicts(&optimized_packages).await?;
         let install_order = self.calculate_optimal_install_order(&optimized_packages)?;
-        let (removed, upgraded) = self.calculate_package_changes(&optimized_packages, installed_packages)?;
+        let (removed, upgraded) =
+            self.calculate_package_changes(&optimized_packages, installed_packages)?;
         let resolution_time = start_time.elapsed();
         let optimization_score = self.calculate_optimization_score(&optimized_packages);
         let result = ResolutionResult {
@@ -362,9 +370,13 @@ impl DependencyResolver {
             resolution_time,
             optimization_score,
         };
-        self.resolution_cache.write().insert(cache_key, result.clone());
-        info!("Advanced dependency resolution completed in {:?} with score {:.2}", 
-              resolution_time, optimization_score);
+        self.resolution_cache
+            .write()
+            .insert(cache_key, result.clone());
+        info!(
+            "Advanced dependency resolution completed in {:?} with score {:.2}",
+            resolution_time, optimization_score
+        );
         Ok(result)
     }
     async fn discover_all_candidates(
@@ -388,7 +400,9 @@ impl DependencyResolver {
                 if dependency.optional && !self.should_include_optional(&dependency) {
                     continue;
                 }
-                let dep_candidates = self.find_dependency_candidates(dependency, repository_manager).await?;
+                let dep_candidates = self
+                    .find_dependency_candidates(dependency, repository_manager)
+                    .await?;
                 for candidate in dep_candidates {
                     if !visited.contains(&candidate.name) {
                         queue.push_back(candidate);
@@ -409,10 +423,15 @@ impl DependencyResolver {
                 candidates.push(package);
             }
         }
-        let search_results = repository_manager.search_packages(&dependency.name, false).await?;
+        let search_results = repository_manager
+            .search_packages(&dependency.name, false)
+            .await?;
         for package in search_results {
-            if self.dependency_matches(&package, dependency) && 
-               !candidates.iter().any(|p| p.name == package.name && p.version == package.version) {
+            if self.dependency_matches(&package, dependency)
+                && !candidates
+                    .iter()
+                    .any(|p| p.name == package.name && p.version == package.version)
+            {
                 candidates.push(package);
             }
         }
@@ -455,7 +474,8 @@ impl DependencyResolver {
     fn compare_package_preference(&self, a: &Package, b: &Package) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         if self.preferences.prefer_newer_versions {
-            if let (Ok(ver_a), Ok(ver_b)) = (Version::parse(&a.version), Version::parse(&b.version)) {
+            if let (Ok(ver_a), Ok(ver_b)) = (Version::parse(&a.version), Version::parse(&b.version))
+            {
                 let version_cmp = ver_b.cmp(&ver_a);
                 if version_cmp != Ordering::Equal {
                     return version_cmp;
@@ -490,16 +510,22 @@ impl DependencyResolver {
         }
     }
     fn is_stable_version(&self, version: &str) -> bool {
-        !version.contains("alpha") && 
-        !version.contains("beta") && 
-        !version.contains("rc") && 
-        !version.contains("dev") &&
-        !version.contains("pre")
+        !version.contains("alpha")
+            && !version.contains("beta")
+            && !version.contains("rc")
+            && !version.contains("dev")
+            && !version.contains("pre")
     }
-    fn build_constraint_system(&mut self, packages: &[Package], installed: &[Package]) -> PackerResult<()> {
+    fn build_constraint_system(
+        &mut self,
+        packages: &[Package],
+        installed: &[Package],
+    ) -> PackerResult<()> {
         self.constraints.clear();
         for package in packages {
-            let _var_id = self.solver.add_variable(format!("{}:{}", package.name, package.version));
+            let _var_id = self
+                .solver
+                .add_variable(format!("{}:{}", package.name, package.version));
             for dependency in &package.dependencies {
                 self.add_dependency_constraint(package, dependency, packages)?;
             }
@@ -509,14 +535,21 @@ impl DependencyResolver {
         }
         for package in installed {
             if !packages.iter().any(|p| p.name == package.name) {
-                let var_id = self.solver.add_variable(format!("{}:{}", package.name, package.version));
+                let var_id = self
+                    .solver
+                    .add_variable(format!("{}:{}", package.name, package.version));
                 self.solver.add_clause(vec![var_id as i32 + 1]);
             }
         }
         self.add_global_constraints(packages)?;
         Ok(())
     }
-    fn add_dependency_constraint(&mut self, package: &Package, dependency: &Dependency, packages: &[Package]) -> PackerResult<()> {
+    fn add_dependency_constraint(
+        &mut self,
+        package: &Package,
+        dependency: &Dependency,
+        packages: &[Package],
+    ) -> PackerResult<()> {
         let package_var = format!("{}:{}", package.name, package.version);
         let package_id = self.solver.add_variable(package_var);
         let mut dependency_vars = Vec::new();
@@ -534,17 +567,20 @@ impl DependencyResolver {
         }
         Ok(())
     }
-    fn add_conflict_constraint(&mut self, package: &Package, conflict: &str, packages: &[Package]) -> PackerResult<()> {
+    fn add_conflict_constraint(
+        &mut self,
+        package: &Package,
+        conflict: &str,
+        packages: &[Package],
+    ) -> PackerResult<()> {
         let package_var = format!("{}:{}", package.name, package.version);
         let package_id = self.solver.add_variable(package_var);
         for candidate in packages {
             if candidate.name == conflict || candidate.provides.contains(&conflict.to_string()) {
                 let conflict_var = format!("{}:{}", candidate.name, candidate.version);
                 let conflict_id = self.solver.add_variable(conflict_var);
-                self.solver.add_clause(vec![
-                    -(package_id as i32 + 1),
-                    -(conflict_id as i32 + 1)
-                ]);
+                self.solver
+                    .add_clause(vec![-(package_id as i32 + 1), -(conflict_id as i32 + 1)]);
             }
         }
         Ok(())
@@ -554,16 +590,17 @@ impl DependencyResolver {
         for package in packages {
             let var_name = format!("{}:{}", package.name, package.version);
             let var_id = self.solver.add_variable(var_name);
-            package_versions.entry(package.name.clone()).or_default().push(var_id);
+            package_versions
+                .entry(package.name.clone())
+                .or_default()
+                .push(var_id);
         }
         for (_package_name, var_ids) in package_versions {
             if var_ids.len() > 1 {
                 for i in 0..var_ids.len() {
                     for j in i + 1..var_ids.len() {
-                        self.solver.add_clause(vec![
-                            -(var_ids[i] as i32 + 1),
-                            -(var_ids[j] as i32 + 1)
-                        ]);
+                        self.solver
+                            .add_clause(vec![-(var_ids[i] as i32 + 1), -(var_ids[j] as i32 + 1)]);
                     }
                 }
             }
@@ -574,7 +611,7 @@ impl DependencyResolver {
         let start_time = std::time::Instant::now();
         if !self.solver.solve() {
             return Err(PackerError::DependencyConflict(
-                "No satisfying assignment found for dependency constraints".to_string()
+                "No satisfying assignment found for dependency constraints".to_string(),
             ));
         }
         let solution = self.solver.get_solution();
@@ -582,7 +619,11 @@ impl DependencyResolver {
         debug!("SAT solver found solution in {:?}", solve_time);
         Ok(solution)
     }
-    fn extract_selected_packages(&self, solution: HashMap<String, bool>, candidates: &[Package]) -> PackerResult<Vec<Package>> {
+    fn extract_selected_packages(
+        &self,
+        solution: HashMap<String, bool>,
+        candidates: &[Package],
+    ) -> PackerResult<Vec<Package>> {
         let mut selected = Vec::new();
         for package in candidates {
             let var_name = format!("{}:{}", package.name, package.version);
@@ -592,10 +633,16 @@ impl DependencyResolver {
         }
         Ok(selected)
     }
-    async fn optimize_selection(&self, packages: Vec<Package>, repository_manager: &RepositoryManager) -> PackerResult<Vec<Package>> {
+    async fn optimize_selection(
+        &self,
+        packages: Vec<Package>,
+        repository_manager: &RepositoryManager,
+    ) -> PackerResult<Vec<Package>> {
         let mut optimized = packages;
         for goal in &self.preferences.optimization_goals {
-            optimized = self.apply_optimization_goal(optimized, goal, repository_manager).await?;
+            optimized = self
+                .apply_optimization_goal(optimized, goal, repository_manager)
+                .await?;
         }
         Ok(optimized)
     }
@@ -626,7 +673,9 @@ impl DependencyResolver {
                 packages.sort_by(|a, b| {
                     let trust_a = self.get_repository_trust_score(&a.repository);
                     let trust_b = self.get_repository_trust_score(&b.repository);
-                    trust_b.partial_cmp(&trust_a).unwrap_or(std::cmp::Ordering::Equal)
+                    trust_b
+                        .partial_cmp(&trust_a)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
             }
             OptimizationGoal::MinimizeConflicts => {
@@ -635,7 +684,10 @@ impl DependencyResolver {
         }
         Ok(packages)
     }
-    async fn detect_advanced_conflicts(&self, packages: &[Package]) -> PackerResult<ConflictCheckResult> {
+    async fn detect_advanced_conflicts(
+        &self,
+        packages: &[Package],
+    ) -> PackerResult<ConflictCheckResult> {
         let mut conflicts = Vec::new();
         for (i, pkg1) in packages.iter().enumerate() {
             for pkg2 in packages.iter().skip(i + 1) {
@@ -644,8 +696,10 @@ impl DependencyResolver {
                 }
                 for provides in &pkg1.provides {
                     if pkg2.replaces.contains(provides) {
-                        conflicts.push(format!("{} provides {}, but {} replaces it", 
-                                               pkg1.name, provides, pkg2.name));
+                        conflicts.push(format!(
+                            "{} provides {}, but {} replaces it",
+                            pkg1.name, provides, pkg2.name
+                        ));
                     }
                 }
             }
@@ -688,16 +742,24 @@ impl DependencyResolver {
             }
         }
     }
-    fn calculate_package_changes(&self, selected: &[Package], installed: &[Package]) -> PackerResult<(Vec<String>, Vec<(Package, Package)>)> {
+    fn calculate_package_changes(
+        &self,
+        selected: &[Package],
+        installed: &[Package],
+    ) -> PackerResult<(Vec<String>, Vec<(Package, Package)>)> {
         let mut to_remove = Vec::new();
         let mut to_upgrade = Vec::new();
         let selected_names: HashSet<String> = selected.iter().map(|p| p.name.clone()).collect();
         for installed_pkg in installed {
             if !selected_names.contains(&installed_pkg.name) {
                 to_remove.push(installed_pkg.name.clone());
-            } else if let Some(selected_pkg) = selected.iter().find(|p| p.name == installed_pkg.name) {
-                if let (Ok(installed_ver), Ok(selected_ver)) = 
-                   (Version::parse(&installed_pkg.version), Version::parse(&selected_pkg.version)) {
+            } else if let Some(selected_pkg) =
+                selected.iter().find(|p| p.name == installed_pkg.name)
+            {
+                if let (Ok(installed_ver), Ok(selected_ver)) = (
+                    Version::parse(&installed_pkg.version),
+                    Version::parse(&selected_pkg.version),
+                ) {
                     if selected_ver > installed_ver {
                         to_upgrade.push((installed_pkg.clone(), selected_pkg.clone()));
                     }
@@ -723,16 +785,23 @@ impl DependencyResolver {
         score / packages.len() as f64
     }
     pub async fn check_conflicts(&self, packages: &[String]) -> PackerResult<ConflictCheckResult> {
-        info!("Performing advanced conflict checking for {} packages", packages.len());
+        info!(
+            "Performing advanced conflict checking for {} packages",
+            packages.len()
+        );
         let mut conflicts = Vec::new();
         let circular_dependencies = self.graph.find_circular_dependencies();
         let version_conflicts = self.check_version_conflicts_advanced(packages).await?;
         let architecture_conflicts = self.check_architecture_conflicts_advanced(packages).await?;
-        let suggestions = self.generate_conflict_suggestions(&version_conflicts, &architecture_conflicts).await?;
+        let suggestions = self
+            .generate_conflict_suggestions(&version_conflicts, &architecture_conflicts)
+            .await?;
         let conflict_info = self.graph.find_conflicts(packages);
         for conflict in conflict_info {
-            conflicts.push(format!("{} conflicts with {}: {}", 
-                conflict.package1, conflict.package2, conflict.reason));
+            conflicts.push(format!(
+                "{} conflicts with {}: {}",
+                conflict.package1, conflict.package2, conflict.reason
+            ));
         }
         Ok(ConflictCheckResult {
             conflicts,
@@ -742,7 +811,10 @@ impl DependencyResolver {
             suggestions,
         })
     }
-    async fn check_version_conflicts_advanced(&self, packages: &[String]) -> PackerResult<Vec<VersionConflict>> {
+    async fn check_version_conflicts_advanced(
+        &self,
+        packages: &[String],
+    ) -> PackerResult<Vec<VersionConflict>> {
         let mut conflicts = Vec::new();
         let mut version_requirements: HashMap<String, Vec<(String, VersionReq)>> = HashMap::new();
         for package_name in packages {
@@ -775,7 +847,10 @@ impl DependencyResolver {
                 if !conflicting_packages.is_empty() {
                     conflicts.push(VersionConflict {
                         package: dep_package,
-                        required_versions: requirements.iter().map(|(_, req)| req.to_string()).collect(),
+                        required_versions: requirements
+                            .iter()
+                            .map(|(_, req)| req.to_string())
+                            .collect(),
                         conflicting_packages,
                     });
                 }
@@ -794,7 +869,10 @@ impl DependencyResolver {
         }
         false
     }
-    async fn check_architecture_conflicts_advanced(&self, packages: &[String]) -> PackerResult<Vec<ArchConflict>> {
+    async fn check_architecture_conflicts_advanced(
+        &self,
+        packages: &[String],
+    ) -> PackerResult<Vec<ArchConflict>> {
         let mut conflicts = Vec::new();
         let mut arch_requirements: HashMap<String, Vec<(String, String)>> = HashMap::new();
         for package_name in packages {
@@ -810,7 +888,8 @@ impl DependencyResolver {
             }
         }
         for (dep_package, requirements) in arch_requirements {
-            let unique_archs: HashSet<String> = requirements.iter().map(|(_, arch)| arch.clone()).collect();
+            let unique_archs: HashSet<String> =
+                requirements.iter().map(|(_, arch)| arch.clone()).collect();
             if unique_archs.len() > 1 {
                 conflicts.push(ArchConflict {
                     package: dep_package,
@@ -830,7 +909,10 @@ impl DependencyResolver {
         for conflict in version_conflicts {
             suggestions.push(ConflictSuggestion {
                 suggestion_type: SuggestionType::UpgradeToCompatible,
-                description: format!("Upgrade conflicting packages to versions compatible with {}", conflict.package),
+                description: format!(
+                    "Upgrade conflicting packages to versions compatible with {}",
+                    conflict.package
+                ),
                 packages_to_remove: Vec::new(),
                 packages_to_add: Vec::new(),
                 packages_to_upgrade: conflict.conflicting_packages.clone(),
@@ -841,7 +923,10 @@ impl DependencyResolver {
                 suggestion_type: SuggestionType::UseAlternative,
                 description: format!("Use architecture-specific version of {}", conflict.package),
                 packages_to_remove: conflict.conflicting_packages.clone(),
-                packages_to_add: vec![format!("{}-{}", conflict.package, conflict.required_archs[0])],
+                packages_to_add: vec![format!(
+                    "{}-{}",
+                    conflict.package, conflict.required_archs[0]
+                )],
                 packages_to_upgrade: Vec::new(),
             });
         }
@@ -861,7 +946,10 @@ impl DependencyResolver {
         }
         format!("{:x}", hasher.finish())
     }
-    pub async fn resolve_dependencies(&mut self, packages: &[Package]) -> PackerResult<ResolutionResult> {
+    pub async fn resolve_dependencies(
+        &mut self,
+        packages: &[Package],
+    ) -> PackerResult<ResolutionResult> {
         let start_time = std::time::Instant::now();
         let mut additional_packages = Vec::new();
         let mut resolved_packages = HashSet::new();
@@ -881,7 +969,10 @@ impl DependencyResolver {
                 }
                 let candidate = self.find_best_candidate(dependency).await?;
                 if let Some(candidate_package) = candidate {
-                    debug!("Found candidate for {}: {} {}", dependency.name, candidate_package.name, candidate_package.version);
+                    debug!(
+                        "Found candidate for {}: {} {}",
+                        dependency.name, candidate_package.name, candidate_package.version
+                    );
                     additional_packages.push(candidate_package.clone());
                     self.add_package_to_graph(&candidate_package).await?;
                     resolved_packages.insert(candidate_package.name.clone());
@@ -933,15 +1024,25 @@ impl DependencyResolver {
     async fn find_best_candidate(&self, dependency: &Dependency) -> PackerResult<Option<Package>> {
         debug!("Finding candidate for dependency: {}", dependency);
         if let Some(cached_packages) = self.get_packages_from_cache(&dependency.name) {
-            debug!("Found {} cached packages for {}", cached_packages.len(), dependency.name);
+            debug!(
+                "Found {} cached packages for {}",
+                cached_packages.len(),
+                dependency.name
+            );
             for package in cached_packages {
                 if self.dependency_matches(&package, dependency) {
-                    debug!("Found matching cached package: {} {}", package.name, package.version);
+                    debug!(
+                        "Found matching cached package: {} {}",
+                        package.name, package.version
+                    );
                     return Ok(Some(package));
                 }
             }
         }
-        debug!("No suitable candidate found for dependency: {}", dependency.name);
+        debug!(
+            "No suitable candidate found for dependency: {}",
+            dependency.name
+        );
         Ok(None)
     }
     pub fn add_package_to_cache(&mut self, name: String, packages: Vec<Package>) {
@@ -967,13 +1068,16 @@ impl DependencyResolver {
         visited: &mut HashSet<String>,
     ) -> PackerResult<()> {
         if visited.contains(package) {
-            return Ok(()); 
+            return Ok(());
         }
         visited.insert(package.to_string());
         tree.push(package.to_string());
         Ok(())
     }
-    pub fn find_orphaned_packages(&self, installed_packages: &[String]) -> PackerResult<Vec<String>> {
+    pub fn find_orphaned_packages(
+        &self,
+        installed_packages: &[String],
+    ) -> PackerResult<Vec<String>> {
         let mut orphaned = Vec::new();
         for package in installed_packages {
             let mut is_orphaned = true;
@@ -998,7 +1102,10 @@ impl DependencyResolver {
         }
         Ok(orphaned)
     }
-    pub fn find_broken_dependencies(&self, installed_packages: &[String]) -> PackerResult<Vec<String>> {
+    pub fn find_broken_dependencies(
+        &self,
+        installed_packages: &[String],
+    ) -> PackerResult<Vec<String>> {
         let mut broken = Vec::new();
         for package in installed_packages {
             if let Some(node) = self.graph.nodes.get(package) {
@@ -1042,49 +1149,66 @@ impl DependencyResolver {
         repository_manager: &RepositoryManager,
     ) -> PackerResult<Vec<ConflictSuggestion>> {
         let start_time = Instant::now();
-        info!("Starting intelligent conflict resolution for {} packages", packages.len());
-        
+        info!(
+            "Starting intelligent conflict resolution for {} packages",
+            packages.len()
+        );
+
         let conflicts = self.detect_advanced_conflicts(packages).await?;
         if conflicts.conflicts.is_empty() && conflicts.circular_dependencies.is_empty() {
             return Ok(vec![]);
         }
-        
+
         let mut suggestions = Vec::new();
-        
+
         for strategy in &self.conflict_resolver.resolution_strategies {
             match strategy {
                 ResolutionStrategy::BacktrackSearch => {
-                    suggestions.extend(self.backtrack_conflict_resolution(&conflicts, repository_manager).await?);
+                    suggestions.extend(
+                        self.backtrack_conflict_resolution(&conflicts, repository_manager)
+                            .await?,
+                    );
                 }
                 ResolutionStrategy::ConstraintPropagation => {
-                    suggestions.extend(self.constraint_propagation_resolution(&conflicts, repository_manager).await?);
+                    suggestions.extend(
+                        self.constraint_propagation_resolution(&conflicts, repository_manager)
+                            .await?,
+                    );
                 }
                 ResolutionStrategy::LocalSearch => {
-                    suggestions.extend(self.local_search_resolution(&conflicts, packages, repository_manager).await?);
+                    suggestions.extend(
+                        self.local_search_resolution(&conflicts, packages, repository_manager)
+                            .await?,
+                    );
                 }
                 ResolutionStrategy::HybridApproach => {
-                    suggestions.extend(self.hybrid_resolution(&conflicts, packages, repository_manager).await?);
+                    suggestions.extend(
+                        self.hybrid_resolution(&conflicts, packages, repository_manager)
+                            .await?,
+                    );
                 }
                 _ => {
                     debug!("Resolution strategy {:?} not yet implemented", strategy);
                 }
             }
-            
+
             if start_time.elapsed() > self.conflict_resolver.heuristics.conflict_timeout {
                 warn!("Conflict resolution timeout reached");
                 break;
             }
         }
-        
+
         suggestions.sort_by(|a, b| {
             let score_a = self.calculate_suggestion_score(a);
             let score_b = self.calculate_suggestion_score(b);
-            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
-        
+
         Ok(suggestions)
     }
-    
+
     /// Backtracking-based conflict resolution
     async fn backtrack_conflict_resolution(
         &self,
@@ -1092,29 +1216,43 @@ impl DependencyResolver {
         repository_manager: &RepositoryManager,
     ) -> PackerResult<Vec<ConflictSuggestion>> {
         let mut suggestions = Vec::new();
-        
+
         for conflict in &conflicts.version_conflicts {
-            let alternative_versions = self.find_compatible_versions(&conflict.package, &conflict.required_versions, repository_manager).await?;
-            
+            let alternative_versions = self
+                .find_compatible_versions(
+                    &conflict.package,
+                    &conflict.required_versions,
+                    repository_manager,
+                )
+                .await?;
+
             for version in alternative_versions {
                 suggestions.push(ConflictSuggestion {
                     suggestion_type: SuggestionType::UpgradeToCompatible,
-                    description: format!("Upgrade {} to version {} to resolve version conflict", conflict.package, version),
+                    description: format!(
+                        "Upgrade {} to version {} to resolve version conflict",
+                        conflict.package, version
+                    ),
                     packages_to_remove: vec![],
                     packages_to_add: vec![format!("{}={}", conflict.package, version)],
                     packages_to_upgrade: vec![conflict.package.clone()],
                 });
             }
         }
-        
+
         for circular_dep in &conflicts.circular_dependencies {
             if circular_dep.len() > 1 {
-                let optional_deps = self.find_optional_dependencies_in_cycle(circular_dep, repository_manager).await?;
-                
+                let optional_deps = self
+                    .find_optional_dependencies_in_cycle(circular_dep, repository_manager)
+                    .await?;
+
                 for optional_dep in optional_deps {
                     suggestions.push(ConflictSuggestion {
                         suggestion_type: SuggestionType::RelaxConstraints,
-                        description: format!("Make dependency {} optional to break circular dependency", optional_dep),
+                        description: format!(
+                            "Make dependency {} optional to break circular dependency",
+                            optional_dep
+                        ),
                         packages_to_remove: vec![],
                         packages_to_add: vec![],
                         packages_to_upgrade: vec![optional_dep],
@@ -1122,10 +1260,10 @@ impl DependencyResolver {
                 }
             }
         }
-        
+
         Ok(suggestions)
     }
-    
+
     async fn find_compatible_versions(
         &self,
         package_name: &str,
@@ -1133,19 +1271,20 @@ impl DependencyResolver {
         repository_manager: &RepositoryManager,
     ) -> PackerResult<Vec<String>> {
         let mut compatible_versions = Vec::new();
-        
+
         if let Ok(Some(package)) = repository_manager.get_package(package_name).await {
             let current_version = package.version.clone();
-            
-            let available_versions = if let Ok(versions) = repository_manager.get_package_versions(package_name).await {
-                versions
-            } else {
-                vec![current_version.clone()]
-            };
-            
+
+            let available_versions =
+                if let Ok(versions) = repository_manager.get_package_versions(package_name).await {
+                    versions
+                } else {
+                    vec![current_version.clone()]
+                };
+
             for version in &available_versions {
                 let mut is_compatible = true;
-                
+
                 for required_version in required_versions {
                     if let Ok(version_req) = semver::VersionReq::parse(required_version) {
                         if let Ok(parsed_version) = semver::Version::parse(version) {
@@ -1156,17 +1295,17 @@ impl DependencyResolver {
                         }
                     }
                 }
-                
+
                 if is_compatible && !compatible_versions.contains(version) {
                     compatible_versions.push(version.clone());
                 }
             }
-            
+
             if compatible_versions.is_empty() {
                 compatible_versions.push(current_version);
             }
         }
-        
+
         Ok(compatible_versions)
     }
 
@@ -1177,15 +1316,20 @@ impl DependencyResolver {
         repository_manager: &RepositoryManager,
     ) -> PackerResult<Vec<ConflictSuggestion>> {
         let mut suggestions = Vec::new();
-        
+
         for conflict in &conflicts.conflicts {
             let alternatives = repository_manager.find_alternatives(conflict).await?;
-            
+
             for alternative in alternatives {
-                if let Ok(Some(alt_package)) = repository_manager.find_package(&alternative, true).await {
+                if let Ok(Some(alt_package)) =
+                    repository_manager.find_package(&alternative, true).await
+                {
                     suggestions.push(ConflictSuggestion {
                         suggestion_type: SuggestionType::UseAlternative,
-                        description: format!("Use {} as alternative to conflicting {}", alternative, conflict),
+                        description: format!(
+                            "Use {} as alternative to conflicting {}",
+                            alternative, conflict
+                        ),
                         packages_to_remove: vec![conflict.clone()],
                         packages_to_add: vec![alt_package.name],
                         packages_to_upgrade: vec![],
@@ -1193,10 +1337,10 @@ impl DependencyResolver {
                 }
             }
         }
-        
+
         Ok(suggestions)
     }
-    
+
     /// Local search resolution
     async fn local_search_resolution(
         &self,
@@ -1206,23 +1350,27 @@ impl DependencyResolver {
     ) -> PackerResult<Vec<ConflictSuggestion>> {
         let mut suggestions = Vec::new();
         let mut current_solution = packages.to_vec();
-        
+
         for _ in 0..10 {
-            let improved_solution = self.local_search_step(&current_solution, conflicts, repository_manager).await?;
-            
-            if self.evaluate_solution_quality(&improved_solution) > self.evaluate_solution_quality(&current_solution) {
+            let improved_solution = self
+                .local_search_step(&current_solution, conflicts, repository_manager)
+                .await?;
+
+            if self.evaluate_solution_quality(&improved_solution)
+                > self.evaluate_solution_quality(&current_solution)
+            {
                 current_solution = improved_solution;
             }
         }
-        
+
         let changes = self.compare_solutions(packages, &current_solution);
         if !changes.packages_to_remove.is_empty() || !changes.packages_to_add.is_empty() {
             suggestions.push(changes);
         }
-        
+
         Ok(suggestions)
     }
-    
+
     /// Hybrid resolution combining multiple strategies
     async fn hybrid_resolution(
         &self,
@@ -1231,29 +1379,41 @@ impl DependencyResolver {
         repository_manager: &RepositoryManager,
     ) -> PackerResult<Vec<ConflictSuggestion>> {
         let mut suggestions = Vec::new();
-        
-        suggestions.extend(self.backtrack_conflict_resolution(conflicts, repository_manager).await?);
-        suggestions.extend(self.constraint_propagation_resolution(conflicts, repository_manager).await?);
-        suggestions.extend(self.local_search_resolution(conflicts, packages, repository_manager).await?);
-        
+
+        suggestions.extend(
+            self.backtrack_conflict_resolution(conflicts, repository_manager)
+                .await?,
+        );
+        suggestions.extend(
+            self.constraint_propagation_resolution(conflicts, repository_manager)
+                .await?,
+        );
+        suggestions.extend(
+            self.local_search_resolution(conflicts, packages, repository_manager)
+                .await?,
+        );
+
         suggestions.dedup_by(|a, b| {
-            a.description == b.description && 
-            a.packages_to_remove == b.packages_to_remove &&
-            a.packages_to_add == b.packages_to_add
+            a.description == b.description
+                && a.packages_to_remove == b.packages_to_remove
+                && a.packages_to_add == b.packages_to_add
         });
-        
+
         Ok(suggestions)
     }
-    
+
     pub async fn optimize_multi_objective(
         &mut self,
         packages: &[Package],
         objectives: &[OptimizationGoal],
     ) -> PackerResult<Vec<Solution>> {
-        info!("Starting multi-objective optimization with {} objectives", objectives.len());
-        
+        info!(
+            "Starting multi-objective optimization with {} objectives",
+            objectives.len()
+        );
+
         let mut solutions = Vec::new();
-        
+
         for combination in self.generate_solution_combinations(packages) {
             let mut solution = Solution {
                 packages: combination.clone(),
@@ -1261,31 +1421,37 @@ impl DependencyResolver {
                 objectives: HashMap::new(),
                 trade_offs: Vec::new(),
             };
-            
+
             for objective in objectives {
                 let objective_score = self.evaluate_objective(&combination, objective);
-                solution.objectives.insert(objective.clone(), objective_score);
+                solution
+                    .objectives
+                    .insert(objective.clone(), objective_score);
             }
-            
+
             solution.score = self.calculate_weighted_score(&solution.objectives);
             solution.trade_offs = self.analyze_trade_offs(&solution.objectives);
-            
+
             solutions.push(solution);
         }
-        
-        solutions.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        
+
+        solutions.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
         let pareto_optimal = self.extract_pareto_frontier(&solutions);
         self.optimizer.pareto_frontier = pareto_optimal.clone();
-        
+
         Ok(pareto_optimal)
     }
-    
+
     fn generate_solution_combinations(&self, packages: &[Package]) -> Vec<Vec<Package>> {
         let mut combinations = Vec::new();
-        
+
         combinations.push(packages.to_vec());
-        
+
         for i in 0..packages.len() {
             let mut variant = packages.to_vec();
             variant.remove(i);
@@ -1293,10 +1459,10 @@ impl DependencyResolver {
                 combinations.push(variant);
             }
         }
-        
+
         combinations
     }
-    
+
     fn evaluate_objective(&self, packages: &[Package], objective: &OptimizationGoal) -> f64 {
         match objective {
             OptimizationGoal::MinimizeDownloadSize => {
@@ -1312,14 +1478,24 @@ impl DependencyResolver {
                 1.0 / (total_deps as f64 + 1.0)
             }
             OptimizationGoal::MaximizeStability => {
-                packages.iter()
-                    .map(|p| if p.version.contains("stable") { 1.0 } else { 0.5 })
-                    .sum::<f64>() / packages.len() as f64
+                packages
+                    .iter()
+                    .map(|p| {
+                        if p.version.contains("stable") {
+                            1.0
+                        } else {
+                            0.5
+                        }
+                    })
+                    .sum::<f64>()
+                    / packages.len() as f64
             }
             OptimizationGoal::MaximizeSecurity => {
-                packages.iter()
+                packages
+                    .iter()
                     .map(|p| self.calculate_security_score(p))
-                    .sum::<f64>() / packages.len() as f64
+                    .sum::<f64>()
+                    / packages.len() as f64
             }
             OptimizationGoal::MinimizeConflicts => {
                 let conflict_count = self.count_potential_conflicts(packages);
@@ -1327,75 +1503,82 @@ impl DependencyResolver {
             }
         }
     }
-    
+
     fn calculate_security_score(&self, package: &Package) -> f64 {
         let mut score: f64 = 1.0;
-        
+
         if package.signature.is_some() {
             score += 0.3;
         }
-        
+
         if !package.checksum.is_empty() {
             score += 0.2;
         }
-        
+
         if package.repository.contains("trusted") {
             score += 0.5;
         }
-        
+
         score.min(1.0)
     }
-    
+
     fn count_potential_conflicts(&self, packages: &[Package]) -> usize {
         let mut conflicts = 0;
-        
+
         for i in 0..packages.len() {
             for j in (i + 1)..packages.len() {
-                if packages[i].conflicts.contains(&packages[j].name) ||
-                   packages[j].conflicts.contains(&packages[i].name) {
+                if packages[i].conflicts.contains(&packages[j].name)
+                    || packages[j].conflicts.contains(&packages[i].name)
+                {
                     conflicts += 1;
                 }
             }
         }
-        
+
         conflicts
     }
-    
+
     fn extract_pareto_frontier(&self, solutions: &[Solution]) -> Vec<Solution> {
         let mut frontier = Vec::new();
-        
+
         for solution in solutions {
             let is_dominated = solutions.iter().any(|other| {
                 if std::ptr::eq(solution, other) {
                     return false;
                 }
-                
+
                 let dominates = solution.objectives.iter().all(|(objective, &score)| {
-                    other.objectives.get(objective).map_or(false, |&other_score| other_score >= score)
+                    other
+                        .objectives
+                        .get(objective)
+                        .map_or(false, |&other_score| other_score >= score)
                 }) && solution.objectives.iter().any(|(objective, &score)| {
-                    other.objectives.get(objective).map_or(false, |&other_score| other_score > score)
+                    other
+                        .objectives
+                        .get(objective)
+                        .map_or(false, |&other_score| other_score > score)
                 });
-                
+
                 dominates
             });
-            
+
             if !is_dominated {
                 frontier.push(solution.clone());
             }
         }
-        
+
         frontier
     }
-    
+
     fn analyze_trade_offs(&self, objectives: &HashMap<OptimizationGoal, f64>) -> Vec<TradeOff> {
         let mut trade_offs = Vec::new();
-        
+
         let objectives_vec: Vec<_> = objectives.iter().collect();
         for i in 0..objectives_vec.len() {
             for j in (i + 1)..objectives_vec.len() {
                 let (obj1, &score1) = objectives_vec[i];
                 let (obj2, &score2) = objectives_vec[j];
-                
+
                 let correlation = self.calculate_objective_correlation(obj1, obj2);
                 if correlation < -0.5 {
                     trade_offs.push(TradeOff {
@@ -1407,46 +1590,51 @@ impl DependencyResolver {
                 }
             }
         }
-        
+
         trade_offs
     }
-    
-    fn calculate_objective_correlation(&self, _obj1: &OptimizationGoal, _obj2: &OptimizationGoal) -> f64 {
+
+    fn calculate_objective_correlation(
+        &self,
+        _obj1: &OptimizationGoal,
+        _obj2: &OptimizationGoal,
+    ) -> f64 {
         -0.6
     }
-    
+
     fn calculate_weighted_score(&self, objectives: &HashMap<OptimizationGoal, f64>) -> f64 {
-        objectives.iter()
+        objectives
+            .iter()
             .map(|(objective, &score)| {
                 let weight = self.optimizer.weights.get(objective).unwrap_or(&1.0);
                 score * weight
             })
             .sum()
     }
-    
+
     fn calculate_suggestion_score(&self, suggestion: &ConflictSuggestion) -> f64 {
         let mut score: f64 = 1.0;
-        
+
         match suggestion.suggestion_type {
             SuggestionType::UseAlternative => score += 0.8,
             SuggestionType::UpgradeToCompatible => score += 0.6,
             SuggestionType::RelaxConstraints => score += 0.4,
             SuggestionType::RemoveConflicting => score += 0.2,
         }
-        
+
         score -= suggestion.packages_to_remove.len() as f64 * 0.1;
         score += suggestion.packages_to_add.len() as f64 * 0.05;
-        
+
         score
     }
-    
+
     async fn find_optional_dependencies_in_cycle(
         &self,
         cycle: &[String],
         repository_manager: &RepositoryManager,
     ) -> PackerResult<Vec<String>> {
         let mut optional_deps = Vec::new();
-        
+
         for package_name in cycle {
             if let Ok(Some(package)) = repository_manager.find_package(package_name, true).await {
                 for dep in &package.dependencies {
@@ -1456,7 +1644,7 @@ impl DependencyResolver {
                 }
             }
         }
-        
+
         Ok(optional_deps)
     }
 
@@ -1467,12 +1655,14 @@ impl DependencyResolver {
         repository_manager: &RepositoryManager,
     ) -> PackerResult<Vec<Package>> {
         let mut improved = current_solution.to_vec();
-        
+
         for conflict in &conflicts.conflicts {
             if let Some(pos) = improved.iter().position(|p| &p.name == conflict) {
                 if let Ok(alternatives) = repository_manager.find_alternatives(conflict).await {
                     for alt_name in alternatives {
-                        if let Ok(Some(alt_package)) = repository_manager.find_package(&alt_name, true).await {
+                        if let Ok(Some(alt_package)) =
+                            repository_manager.find_package(&alt_name, true).await
+                        {
                             improved[pos] = alt_package;
                             break;
                         }
@@ -1480,32 +1670,41 @@ impl DependencyResolver {
                 }
             }
         }
-        
+
         Ok(improved)
     }
-    
+
     fn evaluate_solution_quality(&self, solution: &[Package]) -> f64 {
         let conflict_penalty = self.count_potential_conflicts(solution) as f64 * -10.0;
         let size_penalty = solution.iter().map(|p| p.size as f64).sum::<f64>() * -0.001;
-        let stability_bonus = solution.iter()
-            .map(|p| if p.version.contains("stable") { 5.0 } else { 0.0 })
+        let stability_bonus = solution
+            .iter()
+            .map(|p| {
+                if p.version.contains("stable") {
+                    5.0
+                } else {
+                    0.0
+                }
+            })
             .sum::<f64>();
-        
+
         100.0 + conflict_penalty + size_penalty + stability_bonus
     }
-    
+
     fn compare_solutions(&self, original: &[Package], improved: &[Package]) -> ConflictSuggestion {
         let original_names: HashSet<_> = original.iter().map(|p| &p.name).collect();
         let improved_names: HashSet<_> = improved.iter().map(|p| &p.name).collect();
-        
-        let to_remove: Vec<String> = original_names.difference(&improved_names)
+
+        let to_remove: Vec<String> = original_names
+            .difference(&improved_names)
             .map(|&name| name.clone())
             .collect();
-        
-        let to_add: Vec<String> = improved_names.difference(&original_names)
+
+        let to_add: Vec<String> = improved_names
+            .difference(&original_names)
             .map(|&name| name.clone())
             .collect();
-        
+
         ConflictSuggestion {
             suggestion_type: SuggestionType::UseAlternative,
             description: "Local search optimization suggestion".to_string(),
@@ -1519,4 +1718,4 @@ impl Default for DependencyResolver {
     fn default() -> Self {
         Self::new()
     }
-} 
+}

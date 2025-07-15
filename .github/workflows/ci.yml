@@ -102,7 +102,7 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: 1.75
+        toolchain: 1.83
         components: llvm-tools-preview
         
     - name: Install cargo-llvm-cov

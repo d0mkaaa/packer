@@ -1,19 +1,18 @@
-
 pub mod config;
 pub mod dependency;
 pub mod error;
 pub mod gpg_manager;
 pub mod package;
+pub mod parallel_ops;
 pub mod repository;
 pub mod resolver;
+pub mod security_enhancements;
 pub mod storage;
 pub mod utils;
-pub mod security_enhancements;
-pub mod parallel_ops;
 
+pub use config::Config;
 pub use error::{PackerError, PackerResult};
 pub use package::PackageManager;
-pub use config::Config;
 
 pub const PACKER_VERSION: &str = "0.1.0";
 
@@ -30,7 +29,6 @@ lazy_static! {
             PathBuf::from("/tmp/.packer")
         }
     };
-
     pub static ref PACKER_CONFIG: PathBuf = {
         if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
             PathBuf::from(config_home).join("packer")
@@ -38,7 +36,6 @@ lazy_static! {
             PACKER_HOME.join("config")
         }
     };
-
     pub static ref PACKER_CACHE: PathBuf = {
         if let Ok(cache_home) = std::env::var("XDG_CACHE_HOME") {
             PathBuf::from(cache_home).join("packer")
@@ -46,7 +43,6 @@ lazy_static! {
             PACKER_HOME.join("cache")
         }
     };
-
     pub static ref PACKER_DATA: PathBuf = {
         if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
             PathBuf::from(data_home).join("packer")
@@ -54,4 +50,4 @@ lazy_static! {
             PACKER_HOME.join("data")
         }
     };
-} 
+}

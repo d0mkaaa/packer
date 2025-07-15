@@ -1,7 +1,7 @@
 use crate::error::{PackerError, PackerResult};
-use std::path::{Path, PathBuf};
 use log::{debug, info, warn};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct PackageExtractor {
     supported_formats: HashMap<String, ExtractionMethod>,
@@ -83,33 +83,60 @@ impl PackageExtractor {
         self.security_settings = settings;
         self
     }
-    pub async fn extract_package(&self, archive_path: &Path, extract_to: &Path) -> PackerResult<ExtractionResult> {
-        info!("Extracting package from {:?} to {:?}", archive_path, extract_to);
+    pub async fn extract_package(
+        &self,
+        archive_path: &Path,
+        extract_to: &Path,
+    ) -> PackerResult<ExtractionResult> {
+        info!(
+            "Extracting package from {:?} to {:?}",
+            archive_path, extract_to
+        );
         if !archive_path.exists() {
-            return Err(PackerError::InstallationFailed("Archive file does not exist".into()));
+            return Err(PackerError::InstallationFailed(
+                "Archive file does not exist".into(),
+            ));
         }
         let format = self.detect_format(archive_path)?;
         debug!("Detected format: {:?}", format);
         self.validate_security_constraints(archive_path).await?;
         let extraction_result = match format {
             ExtractionMethod::Tar => self.extract_tar(archive_path, extract_to, None).await,
-            ExtractionMethod::TarGz => self.extract_tar(archive_path, extract_to, Some(CompressionType::Gzip)).await,
-            ExtractionMethod::TarBz2 => self.extract_tar(archive_path, extract_to, Some(CompressionType::Bzip2)).await,
-            ExtractionMethod::TarXz => self.extract_tar(archive_path, extract_to, Some(CompressionType::Xz)).await,
-            ExtractionMethod::TarZstd => self.extract_tar(archive_path, extract_to, Some(CompressionType::Zstd)).await,
+            ExtractionMethod::TarGz => {
+                self.extract_tar(archive_path, extract_to, Some(CompressionType::Gzip))
+                    .await
+            }
+            ExtractionMethod::TarBz2 => {
+                self.extract_tar(archive_path, extract_to, Some(CompressionType::Bzip2))
+                    .await
+            }
+            ExtractionMethod::TarXz => {
+                self.extract_tar(archive_path, extract_to, Some(CompressionType::Xz))
+                    .await
+            }
+            ExtractionMethod::TarZstd => {
+                self.extract_tar(archive_path, extract_to, Some(CompressionType::Zstd))
+                    .await
+            }
             ExtractionMethod::Zip => self.extract_zip(archive_path, extract_to).await,
             ExtractionMethod::Deb => self.extract_deb(archive_path, extract_to).await,
             ExtractionMethod::Rpm => self.extract_rpm(archive_path, extract_to).await,
             ExtractionMethod::AppImage => self.extract_appimage(archive_path, extract_to).await,
-            _ => Err(PackerError::InstallationFailed(format!("Format {:?} not yet implemented", format))),
+            _ => Err(PackerError::InstallationFailed(format!(
+                "Format {:?} not yet implemented",
+                format
+            ))),
         }?;
         self.verify_extraction(&extraction_result).await?;
-        info!("Successfully extracted {} files ({} bytes)", 
-              extraction_result.files_extracted, extraction_result.bytes_extracted);
+        info!(
+            "Successfully extracted {} files ({} bytes)",
+            extraction_result.files_extracted, extraction_result.bytes_extracted
+        );
         Ok(extraction_result)
     }
     fn detect_format(&self, path: &Path) -> PackerResult<ExtractionMethod> {
-        let file_name = path.file_name()
+        let file_name = path
+            .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| PackerError::InstallationFailed("Invalid file name".into()))?
             .to_lowercase();
@@ -119,7 +146,9 @@ impl PackageExtractor {
             }
         }
         let magic_bytes = std::fs::read(path)
-            .map_err(|_| PackerError::InstallationFailed("Cannot read file for format detection".into()))?
+            .map_err(|_| {
+                PackerError::InstallationFailed("Cannot read file for format detection".into())
+            })?
             .get(..32)
             .unwrap_or(&[])
             .to_vec();
@@ -138,25 +167,38 @@ impl PackageExtractor {
         } else if magic_bytes.starts_with(b"\xed\xab\xee\xdb") {
             return Ok(ExtractionMethod::Rpm);
         }
-        Err(PackerError::InstallationFailed("Cannot detect archive format".into()))
+        Err(PackerError::InstallationFailed(
+            "Cannot detect archive format".into(),
+        ))
     }
     async fn validate_security_constraints(&self, archive_path: &Path) -> PackerResult<()> {
         let metadata = tokio::fs::metadata(archive_path).await?;
         if metadata.len() > self.security_settings.max_file_size {
             return Err(PackerError::InstallationFailed(format!(
                 "Archive size {} exceeds maximum allowed size {}",
-                metadata.len(), self.security_settings.max_file_size
+                metadata.len(),
+                self.security_settings.max_file_size
             )));
         }
         Ok(())
     }
-    async fn extract_tar(&self, archive_path: &Path, extract_to: &Path, compression: Option<CompressionType>) -> PackerResult<ExtractionResult> {
+    async fn extract_tar(
+        &self,
+        archive_path: &Path,
+        extract_to: &Path,
+        compression: Option<CompressionType>,
+    ) -> PackerResult<ExtractionResult> {
         self.extract_tar_sync(archive_path, extract_to, compression)
     }
-    fn extract_tar_sync(&self, archive_path: &Path, extract_to: &Path, compression: Option<CompressionType>) -> PackerResult<ExtractionResult> {
-        use std::fs::File;
-        use flate2::read::GzDecoder;
+    fn extract_tar_sync(
+        &self,
+        archive_path: &Path,
+        extract_to: &Path,
+        compression: Option<CompressionType>,
+    ) -> PackerResult<ExtractionResult> {
         use bzip2::read::BzDecoder;
+        use flate2::read::GzDecoder;
+        use std::fs::File;
         use tar::Archive;
         let file = File::open(archive_path)?;
         let mut files_extracted = 0;
@@ -166,11 +208,11 @@ impl PackageExtractor {
             Some(CompressionType::Gzip) => Box::new(GzDecoder::new(file)),
             Some(CompressionType::Bzip2) => Box::new(BzDecoder::new(file)),
             Some(CompressionType::Xz) => {
-                return Err(PackerError::InstallationFailed("XZ compression requires async extraction".into()));
+                return Err(PackerError::InstallationFailed(
+                    "XZ compression requires async extraction".into(),
+                ));
             }
-            Some(CompressionType::Zstd) => {
-                Box::new(zstd::Decoder::new(file)?)
-            }
+            Some(CompressionType::Zstd) => Box::new(zstd::Decoder::new(file)?),
             None => Box::new(file),
         };
         let mut tar = Archive::new(archive);
@@ -196,7 +238,9 @@ impl PackageExtractor {
                 file_type: self.classify_file_type(&path_buf),
             });
             if files_extracted > self.security_settings.max_files {
-                return Err(PackerError::InstallationFailed("Too many files in archive".into()));
+                return Err(PackerError::InstallationFailed(
+                    "Too many files in archive".into(),
+                ));
             }
         }
         Ok(ExtractionResult {
@@ -206,7 +250,11 @@ impl PackageExtractor {
             extraction_time: std::time::Duration::from_secs(0),
         })
     }
-    async fn extract_zip(&self, archive_path: &Path, extract_to: &Path) -> PackerResult<ExtractionResult> {
+    async fn extract_zip(
+        &self,
+        archive_path: &Path,
+        extract_to: &Path,
+    ) -> PackerResult<ExtractionResult> {
         use std::fs::File;
         use zip::ZipArchive;
         let file = File::open(archive_path)?;
@@ -246,7 +294,9 @@ impl PackageExtractor {
                 });
             }
             if files_extracted > self.security_settings.max_files {
-                return Err(PackerError::InstallationFailed("Too many files in archive".into()));
+                return Err(PackerError::InstallationFailed(
+                    "Too many files in archive".into(),
+                ));
             }
         }
         Ok(ExtractionResult {
@@ -256,25 +306,41 @@ impl PackageExtractor {
             extraction_time: std::time::Duration::from_secs(0),
         })
     }
-    async fn extract_deb(&self, archive_path: &Path, extract_to: &Path) -> PackerResult<ExtractionResult> {
+    async fn extract_deb(
+        &self,
+        archive_path: &Path,
+        extract_to: &Path,
+    ) -> PackerResult<ExtractionResult> {
         let temp_dir = tempfile::tempdir()?;
         self.extract_ar(archive_path, temp_dir.path()).await?;
         let data_archive = self.find_data_archive(temp_dir.path())?;
         let result = Box::pin(self.extract_package(&data_archive, extract_to)).await?;
         Ok(result)
     }
-    async fn extract_rpm(&self, _archive_path: &Path, _extract_to: &Path) -> PackerResult<ExtractionResult> {
+    async fn extract_rpm(
+        &self,
+        _archive_path: &Path,
+        _extract_to: &Path,
+    ) -> PackerResult<ExtractionResult> {
         warn!("RPM extraction not fully implemented");
-        Err(PackerError::InstallationFailed("RPM extraction requires rpm2cpio".into()))
+        Err(PackerError::InstallationFailed(
+            "RPM extraction requires rpm2cpio".into(),
+        ))
     }
-    async fn extract_appimage(&self, archive_path: &Path, extract_to: &Path) -> PackerResult<ExtractionResult> {
+    async fn extract_appimage(
+        &self,
+        archive_path: &Path,
+        extract_to: &Path,
+    ) -> PackerResult<ExtractionResult> {
         let output = tokio::process::Command::new(archive_path)
             .arg("--appimage-extract")
             .current_dir(extract_to)
             .output()
             .await?;
         if !output.status.success() {
-            return Err(PackerError::InstallationFailed("Failed to extract AppImage".into()));
+            return Err(PackerError::InstallationFailed(
+                "Failed to extract AppImage".into(),
+            ));
         }
         let extracted_dir = extract_to.join("squashfs-root");
         let file_count = self.count_files_recursive(&extracted_dir)?;
@@ -294,7 +360,9 @@ impl PackageExtractor {
             .output()
             .await?;
         if !output.status.success() {
-            return Err(PackerError::InstallationFailed("Failed to extract AR archive".into()));
+            return Err(PackerError::InstallationFailed(
+                "Failed to extract AR archive".into(),
+            ));
         }
         Ok(())
     }
@@ -307,7 +375,9 @@ impl PackageExtractor {
                 return Ok(entry.path());
             }
         }
-        Err(PackerError::InstallationFailed("No data archive found in deb package".into()))
+        Err(PackerError::InstallationFailed(
+            "No data archive found in deb package".into(),
+        ))
     }
     fn is_safe_path(&self, path: &Path) -> PackerResult<bool> {
         let path_str = path.to_string_lossy();
@@ -323,20 +393,23 @@ impl PackageExtractor {
             return Ok(false);
         }
         if !self.security_settings.allowed_paths.is_empty() {
-            let allowed = self.security_settings.allowed_paths.iter()
+            let allowed = self
+                .security_settings
+                .allowed_paths
+                .iter()
                 .any(|allowed_path| path_str.starts_with(allowed_path));
-            let is_aur_package = path_str.contains("PKGBUILD") || 
-                               path_str.contains(".SRCINFO") || 
-                               path_str.ends_with(".install") ||
-                               path_str.ends_with(".sh") ||
-                               path_str.ends_with(".patch") ||
-                               path_str.ends_with(".diff") ||
-                               path_str.ends_with(".conf") ||
-                               path_str.ends_with(".service") ||
-                               path_str.ends_with(".desktop") ||
-                               path_str.ends_with(".xml") ||
-                               path_str.ends_with("/") ||
-                               !path_str.contains("/");
+            let is_aur_package = path_str.contains("PKGBUILD")
+                || path_str.contains(".SRCINFO")
+                || path_str.ends_with(".install")
+                || path_str.ends_with(".sh")
+                || path_str.ends_with(".patch")
+                || path_str.ends_with(".diff")
+                || path_str.ends_with(".conf")
+                || path_str.ends_with(".service")
+                || path_str.ends_with(".desktop")
+                || path_str.ends_with(".xml")
+                || path_str.ends_with("/")
+                || !path_str.contains("/");
             if !allowed && !is_aur_package {
                 return Ok(false);
             }
@@ -348,7 +421,9 @@ impl PackageExtractor {
             match extension.to_lowercase().as_str() {
                 "exe" | "bin" | "" if self.is_executable(path) => FileType::Executable,
                 "so" | "dll" | "dylib" => FileType::Library,
-                "conf" | "config" | "cfg" | "ini" | "toml" | "yaml" | "yml" | "json" => FileType::Configuration,
+                "conf" | "config" | "cfg" | "ini" | "toml" | "yaml" | "yml" | "json" => {
+                    FileType::Configuration
+                }
                 "txt" | "md" | "rst" | "doc" => FileType::Documentation,
                 "png" | "jpg" | "jpeg" | "gif" | "svg" | "ico" => FileType::Asset,
                 _ => FileType::Data,
@@ -366,7 +441,9 @@ impl PackageExtractor {
     }
     async fn verify_extraction(&self, result: &ExtractionResult) -> PackerResult<()> {
         if result.files_extracted == 0 {
-            return Err(PackerError::InstallationFailed("No files were extracted".into()));
+            return Err(PackerError::InstallationFailed(
+                "No files were extracted".into(),
+            ));
         }
         Ok(())
     }
@@ -417,18 +494,21 @@ pub enum CompressionType {
 }
 pub fn validate_package_name(name: &str) -> PackerResult<()> {
     if name.is_empty() {
-        return Err(PackerError::InvalidPackageName("Package name cannot be empty".into()));
+        return Err(PackerError::InvalidPackageName(
+            "Package name cannot be empty".into(),
+        ));
     }
     for c in name.chars() {
         if !c.is_alphanumeric() && c != '-' && c != '_' && c != '.' {
-            return Err(PackerError::InvalidPackageName(
-                format!("Package name contains invalid character: {}", c)
-            ));
+            return Err(PackerError::InvalidPackageName(format!(
+                "Package name contains invalid character: {}",
+                c
+            )));
         }
     }
     if name.len() > 100 {
         return Err(PackerError::InvalidPackageName(
-            "Package name too long (max 100 characters)".into()
+            "Package name too long (max 100 characters)".into(),
         ));
     }
     Ok(())
@@ -467,9 +547,9 @@ pub fn calculate_checksum(data: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 pub fn calculate_file_checksum(path: &Path) -> PackerResult<String> {
+    use sha2::{Digest, Sha256};
     use std::fs::File;
     use std::io::Read;
-    use sha2::{Digest, Sha256};
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0; 1024];
@@ -488,7 +568,7 @@ pub fn is_root_user() -> bool {
 pub fn require_root() -> PackerResult<()> {
     if !is_root_user() {
         return Err(PackerError::PermissionDenied(
-            "This operation requires root privileges".into()
+            "This operation requires root privileges".into(),
         ));
     }
     Ok(())
@@ -504,8 +584,12 @@ pub fn parse_version(version: &str) -> PackerResult<semver::Version> {
         .map_err(|e| PackerError::InvalidVersion(format!("Invalid version {}: {}", version, e)))
 }
 pub fn parse_version_req(version_req: &str) -> PackerResult<semver::VersionReq> {
-    semver::VersionReq::parse(version_req)
-        .map_err(|e| PackerError::InvalidVersion(format!("Invalid version requirement {}: {}", version_req, e)))
+    semver::VersionReq::parse(version_req).map_err(|e| {
+        PackerError::InvalidVersion(format!(
+            "Invalid version requirement {}: {}",
+            version_req, e
+        ))
+    })
 }
 pub fn compare_versions(version1: &str, version2: &str) -> PackerResult<std::cmp::Ordering> {
     let v1 = parse_version(version1)?;
@@ -518,7 +602,13 @@ pub fn is_newer_version(current: &str, newer: &str) -> PackerResult<bool> {
 pub fn sanitize_filename(filename: &str) -> String {
     filename
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 pub fn get_file_extension(path: &Path) -> Option<String> {
@@ -528,43 +618,50 @@ pub fn get_file_extension(path: &Path) -> Option<String> {
 }
 pub fn is_archive_file(path: &Path) -> bool {
     if let Some(ext) = get_file_extension(path) {
-        matches!(ext.as_str(), "tar" | "gz" | "bz2" | "zip" | "deb" | "rpm" | "xz" | "zst")
+        matches!(
+            ext.as_str(),
+            "tar" | "gz" | "bz2" | "zip" | "deb" | "rpm" | "xz" | "zst"
+        )
     } else {
         false
     }
 }
-pub async fn extract_archive(archive_path: &Path, extract_to: &Path) -> PackerResult<ExtractionResult> {
+pub async fn extract_archive(
+    archive_path: &Path,
+    extract_to: &Path,
+) -> PackerResult<ExtractionResult> {
     let extractor = PackageExtractor::new()?;
     extractor.extract_package(archive_path, extract_to).await
 }
 pub fn run_command(cmd: &str, args: &[&str]) -> PackerResult<()> {
     use std::process::Command;
-    let output = Command::new(cmd)
-        .args(args)
-        .output()
-        .map_err(|e| PackerError::CriticalSystemError(format!("Failed to run command {}: {}", cmd, e)))?;
+    let output = Command::new(cmd).args(args).output().map_err(|e| {
+        PackerError::CriticalSystemError(format!("Failed to run command {}: {}", cmd, e))
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(PackerError::CriticalSystemError(
-            format!("Command {} failed: {}", cmd, stderr)
-        ));
+        return Err(PackerError::CriticalSystemError(format!(
+            "Command {} failed: {}",
+            cmd, stderr
+        )));
     }
     Ok(())
 }
 pub fn run_command_with_output(cmd: &str, args: &[&str]) -> PackerResult<String> {
     use std::process::Command;
-    let output = Command::new(cmd)
-        .args(args)
-        .output()
-        .map_err(|e| PackerError::CriticalSystemError(format!("Failed to run command {}: {}", cmd, e)))?;
+    let output = Command::new(cmd).args(args).output().map_err(|e| {
+        PackerError::CriticalSystemError(format!("Failed to run command {}: {}", cmd, e))
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(PackerError::CriticalSystemError(
-            format!("Command {} failed: {}", cmd, stderr)
-        ));
+        return Err(PackerError::CriticalSystemError(format!(
+            "Command {} failed: {}",
+            cmd, stderr
+        )));
     }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|e| PackerError::CriticalSystemError(format!("Invalid UTF-8 in command output: {}", e)))?;
+    let stdout = String::from_utf8(output.stdout).map_err(|e| {
+        PackerError::CriticalSystemError(format!("Invalid UTF-8 in command output: {}", e))
+    })?;
     Ok(stdout)
 }
 #[cfg(test)]
@@ -601,4 +698,4 @@ mod tests {
         assert!(compare_versions("2.0.0", "1.0.0").unwrap() == std::cmp::Ordering::Greater);
         assert!(compare_versions("1.0.0", "1.0.0").unwrap() == std::cmp::Ordering::Equal);
     }
-} 
+}

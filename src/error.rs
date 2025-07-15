@@ -1,7 +1,7 @@
-use thiserror::Error;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub type PackerResult<T> = Result<T, PackerError>;
 
@@ -394,58 +394,58 @@ impl PackerError {
                 | PackerError::RollbackFailed(_)
         )
     }
-//     pub fn requires_immediate_attention(&self) -> bool {
-//         matches!(
-//             self,
-//             PackerError::SecurityError(_)
-//                 | PackerError::PackageQuarantined(_)
-//                 | PackerError::RecoveryFailed(_)
-//                 | PackerError::RollbackFailed(_)
-//         )
-// //     }
-// //     pub fn get_recovery_suggestion(&self) -> Option<String> {
-//         match self {
-//             PackerError::NetworkError(_) => Some("Check network connection and try again".to_string()),
-//             PackerError::TimeoutError(_) => Some("Increase timeout or try again later".to_string()),
-//             PackerError::DownloadFailed(_) => Some("Try downloading from a different mirror".to_string()),
-//             PackerError::PackageCorrupted(_) => Some("Re-download the package or verify checksums".to_string()),
-//             PackerError::HealthCheckFailed(_) => Some("Run package verification and repair".to_string()),
-//             PackerError::MirrorUnavailable(_) => Some("Switch to a different mirror or repository".to_string()),
-//             PackerError::RepositorySyncFailed(_) => Some("Update repository cache and try again".to_string()),
-//             PackerError::DependencyConflict(_) => Some("Resolve dependency conflicts manually".to_string()),
-//             PackerError::CompatibilityError(_) => Some("Check system compatibility requirements".to_string()),
-//             PackerError::SystemIncompatible(_) => Some("Upgrade system or find compatible version".to_string()),
-//             _ => None,
-//         }
-//     }
-//     pub fn get_error_category(&self) -> ErrorCategory {
-//         match self {
-//             PackerError::NetworkError(_) | PackerError::TimeoutError(_) | PackerError::Http(_) => ErrorCategory::Network,
-//             PackerError::SecurityError(_) | PackerError::SignatureVerificationFailed(_) => ErrorCategory::Security,
-//             PackerError::DependencyConflict(_) | PackerError::CircularDependency(_) => ErrorCategory::Dependency,
-//             PackerError::CompatibilityError(_) | PackerError::SystemIncompatible(_) => ErrorCategory::Compatibility,
-//             PackerError::DatabaseError(_) | PackerError::TransactionError(_) => ErrorCategory::Database,
-//             PackerError::PackageCorrupted(_) | PackerError::HealthCheckFailed(_) => ErrorCategory::Integrity,
-//             PackerError::InstallationFailed(_) | PackerError::RemovalFailed(_) => ErrorCategory::Operation,
-//             _ => ErrorCategory::General,
-//         }
-//     }
-//     pub fn exit_code(&self) -> i32 {
-//         match self {
-//             PackerError::InvalidArguments(_) => 2,
-//             PackerError::PackageNotFound(_) => 3,
-//             PackerError::DependencyConflict(_) => 4,
-//             PackerError::PermissionDenied(_) => 5,
-//             PackerError::SecurityError(_) | PackerError::PackageQuarantined(_) => 6,
-//             PackerError::NetworkError(_) | PackerError::Http(_) => 7,
-//             PackerError::ConfigError(_) => 8,
-//             PackerError::DatabaseError(_) => 9,
-//             PackerError::CompatibilityError(_) | PackerError::SystemIncompatible(_) => 10,
-//             PackerError::PackageCorrupted(_) | PackerError::HealthCheckFailed(_) => 11,
-//             PackerError::RecoveryFailed(_) | PackerError::RollbackFailed(_) => 12,
-//             PackerError::MirrorUnavailable(_) | PackerError::RepositorySyncFailed(_) => 13,
-//             _ => 1,
-//         }
+    //     pub fn requires_immediate_attention(&self) -> bool {
+    //         matches!(
+    //             self,
+    //             PackerError::SecurityError(_)
+    //                 | PackerError::PackageQuarantined(_)
+    //                 | PackerError::RecoveryFailed(_)
+    //                 | PackerError::RollbackFailed(_)
+    //         )
+    // //     }
+    // //     pub fn get_recovery_suggestion(&self) -> Option<String> {
+    //         match self {
+    //             PackerError::NetworkError(_) => Some("Check network connection and try again".to_string()),
+    //             PackerError::TimeoutError(_) => Some("Increase timeout or try again later".to_string()),
+    //             PackerError::DownloadFailed(_) => Some("Try downloading from a different mirror".to_string()),
+    //             PackerError::PackageCorrupted(_) => Some("Re-download the package or verify checksums".to_string()),
+    //             PackerError::HealthCheckFailed(_) => Some("Run package verification and repair".to_string()),
+    //             PackerError::MirrorUnavailable(_) => Some("Switch to a different mirror or repository".to_string()),
+    //             PackerError::RepositorySyncFailed(_) => Some("Update repository cache and try again".to_string()),
+    //             PackerError::DependencyConflict(_) => Some("Resolve dependency conflicts manually".to_string()),
+    //             PackerError::CompatibilityError(_) => Some("Check system compatibility requirements".to_string()),
+    //             PackerError::SystemIncompatible(_) => Some("Upgrade system or find compatible version".to_string()),
+    //             _ => None,
+    //         }
+    //     }
+    //     pub fn get_error_category(&self) -> ErrorCategory {
+    //         match self {
+    //             PackerError::NetworkError(_) | PackerError::TimeoutError(_) | PackerError::Http(_) => ErrorCategory::Network,
+    //             PackerError::SecurityError(_) | PackerError::SignatureVerificationFailed(_) => ErrorCategory::Security,
+    //             PackerError::DependencyConflict(_) | PackerError::CircularDependency(_) => ErrorCategory::Dependency,
+    //             PackerError::CompatibilityError(_) | PackerError::SystemIncompatible(_) => ErrorCategory::Compatibility,
+    //             PackerError::DatabaseError(_) | PackerError::TransactionError(_) => ErrorCategory::Database,
+    //             PackerError::PackageCorrupted(_) | PackerError::HealthCheckFailed(_) => ErrorCategory::Integrity,
+    //             PackerError::InstallationFailed(_) | PackerError::RemovalFailed(_) => ErrorCategory::Operation,
+    //             _ => ErrorCategory::General,
+    //         }
+    //     }
+    //     pub fn exit_code(&self) -> i32 {
+    //         match self {
+    //             PackerError::InvalidArguments(_) => 2,
+    //             PackerError::PackageNotFound(_) => 3,
+    //             PackerError::DependencyConflict(_) => 4,
+    //             PackerError::PermissionDenied(_) => 5,
+    //             PackerError::SecurityError(_) | PackerError::PackageQuarantined(_) => 6,
+    //             PackerError::NetworkError(_) | PackerError::Http(_) => 7,
+    //             PackerError::ConfigError(_) => 8,
+    //             PackerError::DatabaseError(_) => 9,
+    //             PackerError::CompatibilityError(_) | PackerError::SystemIncompatible(_) => 10,
+    //             PackerError::PackageCorrupted(_) | PackerError::HealthCheckFailed(_) => 11,
+    //             PackerError::RecoveryFailed(_) | PackerError::RollbackFailed(_) => 12,
+    //             PackerError::MirrorUnavailable(_) | PackerError::RepositorySyncFailed(_) => 13,
+    //             _ => 1,
+    //         }
 }
 
 pub struct ErrorHandler {
@@ -514,15 +514,24 @@ impl ErrorHandler {
                     if suggestion.automatic && suggestion.success_probability > 0.7 {
                         match suggestion.suggestion_type {
                             RecoveryType::Retry => {
-                                log::info!("Attempting automatic retry for error {}", context.error_id);
+                                log::info!(
+                                    "Attempting automatic retry for error {}",
+                                    context.error_id
+                                );
                                 return Ok(true);
                             }
                             RecoveryType::Alternative => {
-                                log::info!("Attempting alternative approach for error {}", context.error_id);
+                                log::info!(
+                                    "Attempting alternative approach for error {}",
+                                    context.error_id
+                                );
                                 return Ok(true);
                             }
                             RecoveryType::SystemRepair => {
-                                log::info!("Attempting system repair for error {}", context.error_id);
+                                log::info!(
+                                    "Attempting system repair for error {}",
+                                    context.error_id
+                                );
                                 return Ok(self.attempt_system_repair().await);
                             }
                             _ => continue,
@@ -580,26 +589,22 @@ impl ErrorHandler {
                     success_probability: 0.6,
                 },
             ],
-            ErrorCategory::Transaction => vec![
-                RecoverySuggestion {
-                    suggestion_type: RecoveryType::Rollback,
-                    description: "Rollback transaction to previous state".to_string(),
-                    automatic: true,
-                    user_action_required: false,
-                    estimated_fix_time: Some(std::time::Duration::from_secs(90)),
-                    success_probability: 0.95,
-                },
-            ],
-            _ => vec![
-                RecoverySuggestion {
-                    suggestion_type: RecoveryType::Retry,
-                    description: "Retry operation".to_string(),
-                    automatic: false,
-                    user_action_required: true,
-                    estimated_fix_time: Some(std::time::Duration::from_secs(10)),
-                    success_probability: 0.5,
-                },
-            ],
+            ErrorCategory::Transaction => vec![RecoverySuggestion {
+                suggestion_type: RecoveryType::Rollback,
+                description: "Rollback transaction to previous state".to_string(),
+                automatic: true,
+                user_action_required: false,
+                estimated_fix_time: Some(std::time::Duration::from_secs(90)),
+                success_probability: 0.95,
+            }],
+            _ => vec![RecoverySuggestion {
+                suggestion_type: RecoveryType::Retry,
+                description: "Retry operation".to_string(),
+                automatic: false,
+                user_action_required: true,
+                estimated_fix_time: Some(std::time::Duration::from_secs(10)),
+                success_probability: 0.5,
+            }],
         }
     }
 
@@ -691,10 +696,10 @@ impl ErrorHandler {
         if self.error_history.len() < 10 {
             return 0.0;
         }
-        
+
         let recent_errors = self.error_history.len().saturating_sub(10);
         let total_errors = self.error_history.len();
-        
+
         (recent_errors as f64 / total_errors as f64) * 100.0
     }
 }
@@ -706,4 +711,4 @@ pub struct ErrorStatistics {
     pub severity_distribution: HashMap<ErrorSeverity, usize>,
     pub recoverable_percentage: f64,
     pub recent_error_trend: f64,
-} 
+}

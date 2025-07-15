@@ -2,7 +2,7 @@
 name = "packer"
 version = "0.1.0"
 edition = "2021"
-authors = ["d0mkaaa <d0mkaaa@users.noreply.github.com>"]
+authors = ["d0mkaaa <rutkauskasdomantas@gmail.com>"]
 description = "A modern, fast package manager for Arch Linux written in Rust"
 license = "MIT"
 repository = "https://github.com/d0mkaaa/packer"
@@ -18,10 +18,10 @@ include = [
     "LICENSE",
     "CHANGELOG.md"
 ]
-rust-version = "1.75"
+rust-version = "1.83"
 
 [package.metadata]
-msrv = "1.75"
+msrv = "1.78"
 
 [package.metadata.docs.rs]
 all-features = true

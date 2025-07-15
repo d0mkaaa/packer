@@ -129,8 +129,9 @@ impl Dependency {
         let mut dependency = Dependency::new(name);
         for part in parts {
             if part.starts_with('>') || part.starts_with('<') || part.starts_with('=') {
-                let version_req = VersionReq::parse(part)
-                    .map_err(|e| PackerError::InvalidVersion(format!("Invalid version requirement: {}", e)))?;
+                let version_req = VersionReq::parse(part).map_err(|e| {
+                    PackerError::InvalidVersion(format!("Invalid version requirement: {}", e))
+                })?;
                 dependency.version_req = Some(version_req.to_string());
             } else if part.starts_with("arch=") {
                 dependency.arch = Some(part[5..].to_string());
@@ -255,7 +256,10 @@ impl DependencyGraph {
                             conflicts.push(ConflictInfo {
                                 package1: pkg1.clone(),
                                 package2: pkg2.clone(),
-                                reason: format!("{} provides {}, {} replaces {}", pkg1, provides, pkg2, provides),
+                                reason: format!(
+                                    "{} provides {}, {} replaces {}",
+                                    pkg1, provides, pkg2, provides
+                                ),
                             });
                         }
                     }
@@ -264,7 +268,10 @@ impl DependencyGraph {
                             conflicts.push(ConflictInfo {
                                 package1: pkg1.clone(),
                                 package2: pkg2.clone(),
-                                reason: format!("{} provides {}, {} replaces {}", pkg2, provides, pkg1, provides),
+                                reason: format!(
+                                    "{} provides {}, {} replaces {}",
+                                    pkg2, provides, pkg1, provides
+                                ),
                             });
                         }
                     }
@@ -351,4 +358,4 @@ impl std::fmt::Display for Dependency {
         }
         Ok(())
     }
-} 
+}

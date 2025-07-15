@@ -8,13 +8,13 @@ use crate::{
     storage::{DatabaseManager, InstallReason},
     utils::extract_archive,
 };
-use std::path::Path;
 use chrono::{DateTime, Utc};
 use colored::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use log::{error, info, warn, debug};
+use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExploitAvailability {
     pub functional_exploit: bool,
@@ -121,34 +121,34 @@ pub struct SystemRequirements {
 }
 impl PackageStatus {
     pub fn is_active(&self) -> bool {
-        matches!(self, 
-            PackageStatus::Downloading | 
-            PackageStatus::Verifying | 
-            PackageStatus::Installing | 
-            PackageStatus::Upgrading | 
-            PackageStatus::Removing
+        matches!(
+            self,
+            PackageStatus::Downloading
+                | PackageStatus::Verifying
+                | PackageStatus::Installing
+                | PackageStatus::Upgrading
+                | PackageStatus::Removing
         )
     }
     pub fn is_success(&self) -> bool {
-        matches!(self, 
-            PackageStatus::Installed | 
-            PackageStatus::Upgraded | 
-            PackageStatus::Removed
+        matches!(
+            self,
+            PackageStatus::Installed | PackageStatus::Upgraded | PackageStatus::Removed
         )
     }
     pub fn is_error(&self) -> bool {
-        matches!(self, 
-            PackageStatus::Failed(_) | 
-            PackageStatus::Corrupted | 
-            PackageStatus::Conflict | 
-            PackageStatus::Missing
+        matches!(
+            self,
+            PackageStatus::Failed(_)
+                | PackageStatus::Corrupted
+                | PackageStatus::Conflict
+                | PackageStatus::Missing
         )
     }
     pub fn can_retry(&self) -> bool {
-        matches!(self, 
-            PackageStatus::Failed(_) | 
-            PackageStatus::Cancelled | 
-            PackageStatus::Corrupted
+        matches!(
+            self,
+            PackageStatus::Failed(_) | PackageStatus::Cancelled | PackageStatus::Corrupted
         )
     }
 }
@@ -247,10 +247,8 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use tokio::sync::{RwLock, Semaphore};
 use uuid::Uuid;
-use tokio::{
-    sync::{Semaphore, RwLock},
-};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Package {
     pub name: String,
@@ -393,14 +391,19 @@ impl SecurityScanner {
             config,
         }
     }
-    pub async fn scan_package(&self, package: &Package) -> PackerResult<Vec<SecurityVulnerability>> {
+    pub async fn scan_package(
+        &self,
+        package: &Package,
+    ) -> PackerResult<Vec<SecurityVulnerability>> {
         info!("Scanning package {} for vulnerabilities", package.name);
         let vulns = self.vulnerability_db.read().await;
         let mut package_vulns = vulns.get(&package.name).cloned().unwrap_or_default();
         for vuln in &mut package_vulns {
             if let Some(ref fixed_version) = vuln.fixed_version {
-                if let (Ok(current), Ok(fixed)) = 
-                    (semver::Version::parse(&package.version), semver::Version::parse(fixed_version)) {
+                if let (Ok(current), Ok(fixed)) = (
+                    semver::Version::parse(&package.version),
+                    semver::Version::parse(fixed_version),
+                ) {
                     if current >= fixed {
                         continue;
                     }
@@ -409,7 +412,11 @@ impl SecurityScanner {
         }
         Ok(package_vulns)
     }
-    pub async fn verify_signature(&self, package: &Package, file_path: &PathBuf) -> PackerResult<bool> {
+    pub async fn verify_signature(
+        &self,
+        package: &Package,
+        file_path: &PathBuf,
+    ) -> PackerResult<bool> {
         if package.signature.is_none() {
             debug!("No signature available for package: {}", package.name);
             return Ok(false);
@@ -428,24 +435,30 @@ impl SecurityScanner {
         } else {
             PathBuf::from(signature)
         };
-        self.verify_detached_signature(file_path, &signature_path).await
+        self.verify_detached_signature(file_path, &signature_path)
+            .await
     }
     async fn is_gpg_available(&self) -> PackerResult<bool> {
         match tokio::process::Command::new("gpg")
             .arg("--version")
             .output()
-            .await 
+            .await
         {
             Ok(output) => Ok(output.status.success()),
             Err(_) => Ok(false),
         }
     }
-    async fn download_signature(&self, signature_url: &str, package_path: &PathBuf) -> PackerResult<PathBuf> {
+    async fn download_signature(
+        &self,
+        signature_url: &str,
+        package_path: &PathBuf,
+    ) -> PackerResult<PathBuf> {
         let client = reqwest::Client::new();
         let response = client.get(signature_url).send().await?;
         if !response.status().is_success() {
             return Err(PackerError::DownloadFailed(format!(
-                "Failed to download signature: {}", response.status()
+                "Failed to download signature: {}",
+                response.status()
             )));
         }
         let signature_data = response.bytes().await?;
@@ -454,20 +467,24 @@ impl SecurityScanner {
         tokio::fs::write(&signature_path, signature_data).await?;
         Ok(signature_path)
     }
-    async fn verify_detached_signature(&self, file_path: &PathBuf, signature_path: &PathBuf) -> PackerResult<bool> {
+    async fn verify_detached_signature(
+        &self,
+        file_path: &PathBuf,
+        signature_path: &PathBuf,
+    ) -> PackerResult<bool> {
         let mut cmd = tokio::process::Command::new("gpg");
         if let Some(ref gpg_dir) = self.gpg_keyring {
             cmd.env("GNUPGHOME", gpg_dir);
         }
         cmd.arg("--verify")
-           .arg(signature_path)
-           .arg(file_path)
-           .stdout(std::process::Stdio::null())
-           .stderr(std::process::Stdio::piped());
+            .arg(signature_path)
+            .arg(file_path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
         let output = cmd.output().await?;
         if output.status.success() {
             info!("GPG signature verification successful");
-        Ok(true)
+            Ok(true)
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             warn!("GPG signature verification failed: {}", stderr);
@@ -477,7 +494,11 @@ impl SecurityScanner {
             Ok(false)
         }
     }
-    pub async fn import_gpg_keys(&self, key_ids: &[String], keyserver: Option<&str>) -> PackerResult<Vec<GPGKeyInfo>> {
+    pub async fn import_gpg_keys(
+        &self,
+        key_ids: &[String],
+        keyserver: Option<&str>,
+    ) -> PackerResult<Vec<GPGKeyInfo>> {
         let keyserver = keyserver.unwrap_or("keys.gnupg.net");
         let mut imported_keys = Vec::new();
         for key_id in key_ids {
@@ -498,14 +519,14 @@ impl SecurityScanner {
             cmd.env("GNUPGHOME", gpg_dir);
         }
         cmd.arg("--keyserver")
-           .arg(keyserver)
-           .arg("--recv-keys")
-           .arg(key_id);
+            .arg(keyserver)
+            .arg("--recv-keys")
+            .arg(key_id);
         let output = cmd.output().await?;
         if !output.status.success() {
             return Err(PackerError::SecurityError(format!(
-                "Failed to import key {}: {}", 
-                key_id, 
+                "Failed to import key {}: {}",
+                key_id,
                 String::from_utf8_lossy(&output.stderr)
             )));
         }
@@ -516,14 +537,12 @@ impl SecurityScanner {
         if let Some(ref gpg_dir) = self.gpg_keyring {
             cmd.env("GNUPGHOME", gpg_dir);
         }
-        cmd.arg("--with-colons")
-           .arg("--list-keys")
-           .arg(key_id);
+        cmd.arg("--with-colons").arg("--list-keys").arg(key_id);
         let output = cmd.output().await?;
         if !output.status.success() {
             return Err(PackerError::SecurityError(format!(
-                "Failed to get key info for {}: {}", 
-                key_id, 
+                "Failed to get key info for {}: {}",
+                key_id,
                 String::from_utf8_lossy(&output.stderr)
             )));
         }
@@ -535,10 +554,14 @@ impl SecurityScanner {
                     let trust_level = self.parse_trust_level(parts[1]);
                     let _key_size = parts[2].parse::<u32>().unwrap_or(0);
                     let key_id = parts[4].to_string();
-                    let _creation_date = parts[5].parse::<i64>().ok()
+                    let _creation_date = parts[5]
+                        .parse::<i64>()
+                        .ok()
                         .and_then(|ts| DateTime::from_timestamp(ts, 0))
                         .unwrap_or_else(Utc::now);
-                    let expires = parts[6].parse::<i64>().ok()
+                    let expires = parts[6]
+                        .parse::<i64>()
+                        .ok()
                         .and_then(|ts| DateTime::from_timestamp(ts, 0));
                     return Ok(GPGKeyInfo {
                         id: key_id.clone(),
@@ -551,7 +574,10 @@ impl SecurityScanner {
                 }
             }
         }
-        Err(PackerError::SecurityError(format!("Could not parse key info for {}", key_id)))
+        Err(PackerError::SecurityError(format!(
+            "Could not parse key info for {}",
+            key_id
+        )))
     }
     fn parse_trust_level(&self, trust_field: &str) -> String {
         match trust_field {
@@ -652,7 +678,8 @@ impl SecurityScanner {
         if let Some(vulnerabilities) = advisory["vulnerabilities"]["nodes"].as_array() {
             for vuln in vulnerabilities {
                 if let Some(package) = vuln["package "]["name"].as_str() {
-                    let fixed_version = vuln["firstPatchedVersion"]["identifier"].as_str()
+                    let fixed_version = vuln["firstPatchedVersion"]["identifier"]
+                        .as_str()
                         .map(|s| s.to_string());
                     return Some(SecurityVulnerability {
                         package: package.to_string(),
@@ -691,7 +718,10 @@ impl SecurityScanner {
         }
         Ok(vulnerabilities)
     }
-    fn parse_osv_vulnerability(&self, vuln_data: &serde_json::Value) -> Option<SecurityVulnerability> {
+    fn parse_osv_vulnerability(
+        &self,
+        vuln_data: &serde_json::Value,
+    ) -> Option<SecurityVulnerability> {
         let id = vuln_data["id"].as_str()?;
         let summary = vuln_data["summary"].as_str().unwrap_or("");
         let details = vuln_data["details"].as_str().unwrap_or("");
@@ -756,8 +786,7 @@ impl SecurityScanner {
                     "core" | "extra" | "community" | "multilib " => {
                         package_score -= 10.0;
                     }
-                    "aur" => {
-                    }
+                    "aur" => {}
                     _ => {
                         package_score -= 3.0;
                     }
@@ -781,14 +810,17 @@ impl SecurityScanner {
             }
             if !package.license.is_empty() && package.license != "unknown" {
                 match package.license.to_lowercase().as_str() {
-                    l if l.contains("mit") || l.contains("apache") || l.contains("gpl") || l.contains("bsd") => {
+                    l if l.contains("mit")
+                        || l.contains("apache")
+                        || l.contains("gpl")
+                        || l.contains("bsd") =>
+                    {
                         package_score += 2.0;
                     }
                     l if l.contains("proprietary") => {
                         package_score -= 1.0;
                     }
-                    _ => {
-                    }
+                    _ => {}
                 }
             }
             total_score += package_score * package_weight;
@@ -816,12 +848,16 @@ impl SecurityScanner {
                 vulnerable_packages += 1;
                 total_vulnerabilities += vulnerabilities.len();
                 let high_risk = vulnerabilities.iter().any(|v| {
-                    matches!(v.severity, VulnerabilitySeverity::Critical | VulnerabilitySeverity::High)
+                    matches!(
+                        v.severity,
+                        VulnerabilitySeverity::Critical | VulnerabilitySeverity::High
+                    )
                 });
                 if high_risk {
                     high_risk_packages += 1;
                 }
-                let vulnerability_details: Vec<VulnerabilityDetail> = vulnerabilities.iter()
+                let vulnerability_details: Vec<VulnerabilityDetail> = vulnerabilities
+                    .iter()
                     .map(|v| VulnerabilityDetail {
                         id: v.vulnerability_id.clone(),
                         severity: format!("{:?}", v.severity),
@@ -832,7 +868,8 @@ impl SecurityScanner {
                     })
                     .collect();
                 let risk_score = self.calculate_package_risk_score(&vulnerabilities);
-                let recommendation = self.generate_package_recommendation(&vulnerabilities, package);
+                let recommendation =
+                    self.generate_package_recommendation(&vulnerabilities, package);
                 reports.push(VulnerabilityReport {
                     package_name: package.name.clone(),
                     version: package.version.clone(),
@@ -843,10 +880,16 @@ impl SecurityScanner {
             }
         }
         if vulnerable_packages > 0 {
-            recommendations.push(format!("Update {} vulnerable packages ", vulnerable_packages));
+            recommendations.push(format!(
+                "Update {} vulnerable packages ",
+                vulnerable_packages
+            ));
         }
         if high_risk_packages > 0 {
-            recommendations.push(format!("Prioritize {} high-risk packages ", high_risk_packages));
+            recommendations.push(format!(
+                "Prioritize {} high-risk packages ",
+                high_risk_packages
+            ));
         }
         recommendations.push("Enable automatic security updates".to_string());
         recommendations.push("Regularly update vulnerability database ".to_string());
@@ -877,32 +920,55 @@ impl SecurityScanner {
         }
         score.min(10.0_f64)
     }
-    fn generate_package_recommendation(&self, vulnerabilities: &[SecurityVulnerability], package: &Package) -> String {
+    fn generate_package_recommendation(
+        &self,
+        vulnerabilities: &[SecurityVulnerability],
+        package: &Package,
+    ) -> String {
         let has_fix = vulnerabilities.iter().any(|v| v.fixed_version.is_some());
         if has_fix {
-            format!("Update {} to latest version to fix known vulnerabilities", package.name)
+            format!(
+                "Update {} to latest version to fix known vulnerabilities",
+                package.name
+            )
         } else {
-            format!("Monitor {} for security updates - no fixes available yet", package.name)
+            format!(
+                "Monitor {} for security updates - no fixes available yet",
+                package.name
+            )
         }
     }
     pub async fn advanced_vulnerability_assessment(
-        &self, 
+        &self,
         package: &Package,
         system_context: &SystemContext,
     ) -> PackerResult<AdvancedVulnerabilityAssessment> {
-        info!("Performing advanced vulnerability assessment for {}", package.name);
+        info!(
+            "Performing advanced vulnerability assessment for {}",
+            package.name
+        );
         let basic_vulns = self.scan_package(package).await?;
         if basic_vulns.is_empty() {
-            return Err(PackerError::SecurityError("No vulnerabilities found for assessment".into()));
+            return Err(PackerError::SecurityError(
+                "No vulnerabilities found for assessment".into(),
+            ));
         }
-        let vuln = &basic_vulns[0]; 
-        let cvss_vector = self.build_cvss_vector(vuln, package, system_context).await?;
+        let vuln = &basic_vulns[0];
+        let cvss_vector = self
+            .build_cvss_vector(vuln, package, system_context)
+            .await?;
         let epss_score = self.fetch_epss_score(&vuln.vulnerability_id).await?;
         let contextual_risk = self.assess_contextual_risk(package, system_context).await?;
         let temporal_factors = self.analyze_temporal_factors(vuln, package).await?;
-        let threat_intelligence = self.gather_threat_intelligence(&vuln.vulnerability_id).await?;
-        let business_impact = self.calculate_business_impact(package, system_context, &cvss_vector).await?;
-        let mitigation_status = self.assess_mitigation_status(vuln, package, system_context).await?;
+        let threat_intelligence = self
+            .gather_threat_intelligence(&vuln.vulnerability_id)
+            .await?;
+        let business_impact = self
+            .calculate_business_impact(package, system_context, &cvss_vector)
+            .await?;
+        let mitigation_status = self
+            .assess_mitigation_status(vuln, package, system_context)
+            .await?;
         Ok(AdvancedVulnerabilityAssessment {
             vulnerability_id: vuln.vulnerability_id.clone(),
             package: package.name.clone(),
@@ -930,7 +996,8 @@ impl SecurityScanner {
             VulnerabilitySeverity::Critical | VulnerabilitySeverity::High => AttackComplexity::Low,
             _ => AttackComplexity::High,
         };
-        let base_score = self.calculate_cvss_base_score(&attack_vector, &attack_complexity, &vuln.severity);
+        let base_score =
+            self.calculate_cvss_base_score(&attack_vector, &attack_complexity, &vuln.severity);
         Ok(CVSSVector {
             version: "4.0".to_string(),
             attack_vector,
@@ -942,7 +1009,7 @@ impl SecurityScanner {
             integrity_impact: Impact::High,
             availability_impact: Impact::High,
             base_score,
-            temporal_score: base_score * 0.9, 
+            temporal_score: base_score * 0.9,
             environmental_score: base_score * self.get_environmental_modifier(system_context),
             vector_string: format!("CVSS:4.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"),
         })
@@ -991,7 +1058,10 @@ impl SecurityScanner {
     }
     async fn fetch_epss_score(&self, vulnerability_id: &str) -> PackerResult<EPSSScore> {
         let client = reqwest::Client::new();
-        let url = format!("https://api.first.org/data/v1/epss?cve={}", vulnerability_id);
+        let url = format!(
+            "https://api.first.org/data/v1/epss?cve={}",
+            vulnerability_id
+        );
         match client.get(&url).send().await {
             Ok(response) => {
                 if let Ok(data) = response.json::<serde_json::Value>().await {
@@ -1005,11 +1075,10 @@ impl SecurityScanner {
                     }
                 }
             }
-            Err(_) => {
-            }
+            Err(_) => {}
         }
         Ok(EPSSScore {
-            probability: 0.05, 
+            probability: 0.05,
             percentile: 0.5,
             last_updated: Utc::now(),
             data_sources: vec!["Estimated".to_string()],
@@ -1028,7 +1097,9 @@ impl SecurityScanner {
             database_access: self.has_database_access(package).await?,
             web_interfaces: self.has_web_interfaces(package).await?,
         };
-        let compensating_controls = self.evaluate_compensating_controls(package, system_context).await?;
+        let compensating_controls = self
+            .evaluate_compensating_controls(package, system_context)
+            .await?;
         Ok(ContextualRisk {
             system_exposure: system_context.exposure.clone(),
             data_sensitivity: system_context.data_sensitivity.clone(),
@@ -1044,7 +1115,9 @@ impl SecurityScanner {
         package: &Package,
     ) -> PackerResult<TemporalFactors> {
         let vulnerability_age = self.calculate_vulnerability_age(vuln).await?;
-        let exploit_availability = self.check_exploit_availability(&vuln.vulnerability_id).await?;
+        let exploit_availability = self
+            .check_exploit_availability(&vuln.vulnerability_id)
+            .await?;
         let patch_status = self.assess_patch_availability(vuln, package).await?;
         Ok(TemporalFactors {
             exploit_maturity: if exploit_availability.functional_exploit {
@@ -1068,13 +1141,15 @@ impl SecurityScanner {
     ) -> PackerResult<ThreatIntelligence> {
         let threat_actors = self.identify_threat_actors(vulnerability_id).await?;
         let attack_patterns = self.map_to_mitre_attack(vulnerability_id).await?;
-        let iocs = self.fetch_indicators_of_compromise(vulnerability_id).await?;
+        let iocs = self
+            .fetch_indicators_of_compromise(vulnerability_id)
+            .await?;
         Ok(ThreatIntelligence {
             threat_actors,
-            campaigns: vec![], 
+            campaigns: vec![],
             iocs,
             attack_patterns,
-            geographic_threats: vec!["China".to_string(), "Russia".to_string()], 
+            geographic_threats: vec!["China".to_string(), "Russia".to_string()],
             industry_targeting: vec!["Financial".to_string(), "Healthcare".to_string()],
         })
     }
@@ -1084,11 +1159,19 @@ impl SecurityScanner {
         system_context: &SystemContext,
         cvss_vector: &CVSSVector,
     ) -> PackerResult<BusinessImpact> {
-        let financial_impact = self.calculate_financial_impact(package, system_context, cvss_vector).await?;
-        let operational_impact = self.calculate_operational_impact(package, system_context).await?;
+        let financial_impact = self
+            .calculate_financial_impact(package, system_context, cvss_vector)
+            .await?;
+        let operational_impact = self
+            .calculate_operational_impact(package, system_context)
+            .await?;
         let reputational_impact = self.calculate_reputational_impact(system_context).await?;
-        let compliance_impact = self.calculate_compliance_impact(system_context, cvss_vector).await?;
-        let recovery_metrics = self.calculate_recovery_metrics(package, system_context).await?;
+        let compliance_impact = self
+            .calculate_compliance_impact(system_context, cvss_vector)
+            .await?;
+        let recovery_metrics = self
+            .calculate_recovery_metrics(package, system_context)
+            .await?;
         Ok(BusinessImpact {
             financial_impact,
             operational_impact,
@@ -1104,10 +1187,18 @@ impl SecurityScanner {
         system_context: &SystemContext,
     ) -> PackerResult<MitigationStatus> {
         let controls_in_place = system_context.security_controls.clone();
-        let mitigation_effectiveness = self.calculate_mitigation_effectiveness(&controls_in_place, vuln).await?;
-        let residual_risk = self.calculate_residual_risk(vuln, mitigation_effectiveness).await?;
-        let recommended_actions = self.generate_recommended_actions(vuln, package, system_context).await?;
-        let priority_level = self.determine_priority_level(residual_risk, &system_context.business_criticality).await?;
+        let mitigation_effectiveness = self
+            .calculate_mitigation_effectiveness(&controls_in_place, vuln)
+            .await?;
+        let residual_risk = self
+            .calculate_residual_risk(vuln, mitigation_effectiveness)
+            .await?;
+        let recommended_actions = self
+            .generate_recommended_actions(vuln, package, system_context)
+            .await?;
+        let priority_level = self
+            .determine_priority_level(residual_risk, &system_context.business_criticality)
+            .await?;
         Ok(MitigationStatus {
             controls_in_place,
             mitigation_effectiveness,
@@ -1161,7 +1252,11 @@ impl SecurityScanner {
         system_context: &SystemContext,
     ) -> PackerResult<Vec<CompensatingControl>> {
         let mut controls = Vec::new();
-        if system_context.security_controls.iter().any(|c| c.control_id.starts_with("FW")) {
+        if system_context
+            .security_controls
+            .iter()
+            .any(|c| c.control_id.starts_with("FW"))
+        {
             controls.push(CompensatingControl {
                 control_type: "Network Firewall ".to_string(),
                 effectiveness: 0.8,
@@ -1171,24 +1266,30 @@ impl SecurityScanner {
         }
         Ok(controls)
     }
-    async fn calculate_vulnerability_age(&self, _vuln: &SecurityVulnerability) -> PackerResult<u64> {
-        Ok(30) 
+    async fn calculate_vulnerability_age(
+        &self,
+        _vuln: &SecurityVulnerability,
+    ) -> PackerResult<u64> {
+        Ok(30)
     }
-    async fn check_exploit_availability(&self, vulnerability_id: &str) -> PackerResult<ExploitAvailability> {
+    async fn check_exploit_availability(
+        &self,
+        vulnerability_id: &str,
+    ) -> PackerResult<ExploitAvailability> {
         let is_metasploit = self.check_metasploit_availability(vulnerability_id).await?;
         let is_exploit_db = self.check_exploit_db_availability(vulnerability_id).await?;
         Ok(ExploitAvailability {
             functional_exploit: is_metasploit,
             proof_of_concept: is_exploit_db,
-            exploit_kit: false, 
-            active_exploitation: false, 
+            exploit_kit: false,
+            active_exploitation: false,
         })
     }
     async fn check_metasploit_availability(&self, _vulnerability_id: &str) -> PackerResult<bool> {
-        Ok(false) 
+        Ok(false)
     }
     async fn check_exploit_db_availability(&self, _vulnerability_id: &str) -> PackerResult<bool> {
-        Ok(false) 
+        Ok(false)
     }
     async fn assess_patch_availability(
         &self,
@@ -1201,7 +1302,10 @@ impl SecurityScanner {
             Ok(PatchAvailability::NotAvailable)
         }
     }
-    async fn build_disclosure_timeline(&self, _vuln: &SecurityVulnerability) -> PackerResult<DisclosureTimeline> {
+    async fn build_disclosure_timeline(
+        &self,
+        _vuln: &SecurityVulnerability,
+    ) -> PackerResult<DisclosureTimeline> {
         Ok(DisclosureTimeline {
             discovered_date: Some(Utc::now() - chrono::Duration::days(60)),
             disclosed_date: Some(Utc::now() - chrono::Duration::days(30)),
@@ -1210,35 +1314,38 @@ impl SecurityScanner {
             zero_day_duration_days: Some(30),
         })
     }
-    async fn identify_threat_actors(&self, _vulnerability_id: &str) -> PackerResult<Vec<ThreatActor>> {
-        Ok(vec![
-            ThreatActor {
-                name: "APT29".to_string(),
-                sophistication: ThreatSophistication::StateSponsored,
-                motivation: vec!["Espionage".to_string()],
-                attribution_confidence: 0.8,
-            }
-        ])
+    async fn identify_threat_actors(
+        &self,
+        _vulnerability_id: &str,
+    ) -> PackerResult<Vec<ThreatActor>> {
+        Ok(vec![ThreatActor {
+            name: "APT29".to_string(),
+            sophistication: ThreatSophistication::StateSponsored,
+            motivation: vec!["Espionage".to_string()],
+            attribution_confidence: 0.8,
+        }])
     }
-    async fn map_to_mitre_attack(&self, _vulnerability_id: &str) -> PackerResult<Vec<AttackPattern>> {
-        Ok(vec![
-            AttackPattern {
-                mitre_id: "T1068".to_string(), 
-                technique: "Exploitation for Privilege Escalation ".to_string(),
-                tactic: "Privilege Escalation ".to_string(),
-                likelihood: 0.7,
-            }
-        ])
+    async fn map_to_mitre_attack(
+        &self,
+        _vulnerability_id: &str,
+    ) -> PackerResult<Vec<AttackPattern>> {
+        Ok(vec![AttackPattern {
+            mitre_id: "T1068".to_string(),
+            technique: "Exploitation for Privilege Escalation ".to_string(),
+            tactic: "Privilege Escalation ".to_string(),
+            likelihood: 0.7,
+        }])
     }
-    async fn fetch_indicators_of_compromise(&self, _vulnerability_id: &str) -> PackerResult<Vec<IoC>> {
-        Ok(vec![
-            IoC {
-                ioc_type: "domain".to_string(),
-                value: "malicious-example.com ".to_string(),
-                confidence: 0.9,
-                last_seen: Utc::now() - chrono::Duration::days(7),
-            }
-        ])
+    async fn fetch_indicators_of_compromise(
+        &self,
+        _vulnerability_id: &str,
+    ) -> PackerResult<Vec<IoC>> {
+        Ok(vec![IoC {
+            ioc_type: "domain".to_string(),
+            value: "malicious-example.com ".to_string(),
+            confidence: 0.9,
+            last_seen: Utc::now() - chrono::Duration::days(7),
+        }])
     }
     async fn calculate_financial_impact(
         &self,
@@ -1279,7 +1386,7 @@ impl SecurityScanner {
         Ok(OperationalImpact {
             system_downtime_hours: downtime_hours,
             degraded_performance_hours: downtime_hours * 2.0,
-            affected_users: 1000, 
+            affected_users: 1000,
             critical_processes_affected: vec!["Authentication".to_string()],
             cascading_failures: vec!["Dependent services ".to_string()],
         })
@@ -1354,7 +1461,8 @@ impl SecurityScanner {
         if controls.is_empty() {
             return Ok(0.0);
         }
-        let total_effectiveness: f64 = controls.iter()
+        let total_effectiveness: f64 = controls
+            .iter()
             .map(|c| c.effectiveness_rating * c.coverage_percentage)
             .sum();
         Ok((total_effectiveness / controls.len() as f64).min(1.0))
@@ -1364,7 +1472,7 @@ impl SecurityScanner {
         _vuln: &SecurityVulnerability,
         mitigation_effectiveness: f64,
     ) -> PackerResult<f64> {
-        let base_risk = 0.8; 
+        let base_risk = 0.8;
         Ok(base_risk * (1.0 - mitigation_effectiveness))
     }
     async fn generate_recommended_actions(
@@ -1429,7 +1537,7 @@ pub struct AdvancedVulnerabilityAssessment {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CVSSVector {
-    pub version: String,  
+    pub version: String,
     pub attack_vector: AttackVector,
     pub attack_complexity: AttackComplexity,
     pub privileges_required: PrivilegesRequired,
@@ -1441,7 +1549,7 @@ pub struct CVSSVector {
     pub base_score: f64,
     pub temporal_score: f64,
     pub environmental_score: f64,
-    pub vector_string: String,  
+    pub vector_string: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AttackVector {
@@ -1479,8 +1587,8 @@ pub enum Impact {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EPSSScore {
-    pub probability: f64,  
-    pub percentile: f64,   
+    pub probability: f64,
+    pub percentile: f64,
     pub last_updated: DateTime<Utc>,
     pub data_sources: Vec<String>,
 }
@@ -1536,8 +1644,8 @@ pub struct AttackSurface {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompensatingControl {
     pub control_type: String,
-    pub effectiveness: f64,  
-    pub coverage: f64,       
+    pub effectiveness: f64,
+    pub coverage: f64,
     pub description: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1578,7 +1686,7 @@ pub struct DisclosureTimeline {
 pub struct ThreatIntelligence {
     pub threat_actors: Vec<ThreatActor>,
     pub campaigns: Vec<String>,
-    pub iocs: Vec<IoC>,  
+    pub iocs: Vec<IoC>,
     pub attack_patterns: Vec<AttackPattern>,
     pub geographic_threats: Vec<String>,
     pub industry_targeting: Vec<String>,
@@ -1600,14 +1708,14 @@ pub enum ThreatSophistication {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IoC {
-    pub ioc_type: String,  
+    pub ioc_type: String,
     pub value: String,
     pub confidence: f64,
     pub last_seen: DateTime<Utc>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttackPattern {
-    pub mitre_id: String,  
+    pub mitre_id: String,
     pub technique: String,
     pub tactic: String,
     pub likelihood: f64,
@@ -1646,7 +1754,7 @@ pub struct ReputationalImpact {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplianceImpact {
-    pub regulations_affected: Vec<String>,  
+    pub regulations_affected: Vec<String>,
     pub violation_severity: ViolationSeverity,
     pub audit_implications: Vec<String>,
     pub certification_impact: Vec<String>,
@@ -1660,7 +1768,7 @@ pub enum ViolationSeverity {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryMetrics {
-    pub estimated_recovery_time: f64,  
+    pub estimated_recovery_time: f64,
     pub recovery_complexity: RecoveryComplexity,
     pub resource_requirements: ResourceRequirements,
     pub backup_availability: bool,
@@ -1718,7 +1826,7 @@ pub struct RecommendedAction {
     pub action_type: ActionType,
     pub description: String,
     pub priority: Priority,
-    pub estimated_effort: f64,  
+    pub estimated_effort: f64,
     pub cost_estimate: f64,
     pub risk_reduction: f64,
     pub deadline: Option<DateTime<Utc>>,
@@ -1744,12 +1852,12 @@ pub enum Priority {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PriorityLevel {
-    P0Emergency,     
-    P1Critical,      
-    P2High,          
-    P3Medium,        
-    P4Low,           
-    P5Informational, 
+    P0Emergency,
+    P1Critical,
+    P2High,
+    P3Medium,
+    P4Low,
+    P5Informational,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemContext {
@@ -1787,16 +1895,14 @@ impl SystemContext {
             data_sensitivity: DataSensitivity::Confidential,
             network_position: NetworkPosition::ServerInfrastructure,
             user_privileges: UserPrivilegeContext::SystemService,
-            security_controls: vec![
-                SecurityControl {
-                    control_id: "FW-001".to_string(),
-                    control_type: SecurityControlType::Preventive,
-                    implementation_status: ImplementationStatus::FullyImplemented,
-                    effectiveness_rating: 0.85,
-                    coverage_percentage: 0.95,
-                    last_tested: Some(Utc::now()),
-                }
-            ],
+            security_controls: vec![SecurityControl {
+                control_id: "FW-001".to_string(),
+                control_type: SecurityControlType::Preventive,
+                implementation_status: ImplementationStatus::FullyImplemented,
+                effectiveness_rating: 0.85,
+                coverage_percentage: 0.95,
+                last_tested: Some(Utc::now()),
+            }],
             compliance_requirements: vec!["SOX".to_string(), "GDPR ".to_string()],
             business_criticality: BusinessCriticality::MissionCritical,
         }
@@ -1840,9 +1946,11 @@ impl PackageManager {
         info!("Installing packages: {:?}", package_names);
         self.log_operation_details("INSTALL", None);
         let transaction = if no_deps {
-            self.create_simple_install_transaction(package_names).await?
+            self.create_simple_install_transaction(package_names)
+                .await?
         } else {
-            self.create_advanced_install_transaction(package_names).await?
+            self.create_advanced_install_transaction(package_names)
+                .await?
         };
         if !transaction.conflicts.is_empty() && !force {
             error!("Dependency conflicts detected:");
@@ -1859,8 +1967,13 @@ impl PackageManager {
             return Ok(());
         }
         if !force && transaction.security_summary.trust_score < 50.0 {
-            eprintln!("{}", "Warning: Very low security trust score. Use --force to proceed.".yellow());
-            return Err(PackerError::SecurityError("Security verification failed ".into()));
+            eprintln!(
+                "{}",
+                "Warning: Very low security trust score. Use --force to proceed.".yellow()
+            );
+            return Err(PackerError::SecurityError(
+                "Security verification failed ".into(),
+            ));
         }
         self.show_install_transaction_summary(&transaction);
         if !self.confirm_installation(&transaction).await? {
@@ -1871,7 +1984,13 @@ impl PackageManager {
         let transaction_id = transaction.transaction_id.clone();
         let result = self.execute_install_transaction(transaction).await;
         let duration = start_time.elapsed().as_secs();
-        self.record_transaction_result(transaction_id, result.is_ok(), duration, result.as_ref().err()).await?;
+        self.record_transaction_result(
+            transaction_id,
+            result.is_ok(),
+            duration,
+            result.as_ref().err(),
+        )
+        .await?;
         result?;
         info!("Installation completed successfully ");
         Ok(())
@@ -1905,13 +2024,15 @@ impl PackageManager {
                     .await?
                     .ok_or_else(|| PackerError::PackageNotFound(name.clone()))?;
                 if installed_pkg.version == available_package.version {
-                    println!("📦 {} {} is already installed (same version)", 
-                        name.green().bold(), 
+                    println!(
+                        "📦 {} {} is already installed (same version)",
+                        name.green().bold(),
                         installed_pkg.version.cyan()
                     );
                 } else {
-                    println!("📦 {} {} is installed, {} is available (upgrade)", 
-                        name.green().bold(), 
+                    println!(
+                        "📦 {} {} is installed, {} is available (upgrade)",
+                        name.green().bold(),
                         installed_pkg.version.cyan(),
                         available_package.version.yellow()
                     );
@@ -1919,30 +2040,36 @@ impl PackageManager {
                 }
             }
             println!();
-             let total_requested = package_names.len();
-             let confirmation_message = if different_versions.is_empty() {
-                 if already_installed.len() == total_requested {
-                     if already_installed.len() == 1 {
-                         ":: The package is already installed with the same version. Reinstall it? [y/N] "
-                     } else {
-                         ":: All packages are already installed with the same versions. Reinstall them? [y/N] "
-                     }
-                 } else {
-                     ":: Some packages are already installed with the same version. Continue with installation? [Y/n] "
-                 }
-             } else if already_installed.len() == different_versions.len() {
-                 if different_versions.len() == 1 {
-                     ":: The package can be upgraded to a newer version. Proceed? [Y/n] "
-                 } else {
-                     ":: All packages can be upgraded to newer versions. Proceed? [Y/n] "
-                 }
-             } else {
-                 ":: Some packages are already installed, others can be upgraded. Proceed? [Y/n] "
-             };
-                         let default_yes = !different_versions.is_empty() || already_installed.len() < total_requested;
-             if !self.confirm_reinstall_or_upgrade(confirmation_message, default_yes).await? {
+            let total_requested = package_names.len();
+            let confirmation_message = if different_versions.is_empty() {
+                if already_installed.len() == total_requested {
+                    if already_installed.len() == 1 {
+                        ":: The package is already installed with the same version. Reinstall it? [y/N] "
+                    } else {
+                        ":: All packages are already installed with the same versions. Reinstall them? [y/N] "
+                    }
+                } else {
+                    ":: Some packages are already installed with the same version. Continue with installation? [Y/n] "
+                }
+            } else if already_installed.len() == different_versions.len() {
+                if different_versions.len() == 1 {
+                    ":: The package can be upgraded to a newer version. Proceed? [Y/n] "
+                } else {
+                    ":: All packages can be upgraded to newer versions. Proceed? [Y/n] "
+                }
+            } else {
+                ":: Some packages are already installed, others can be upgraded. Proceed? [Y/n] "
+            };
+            let default_yes =
+                !different_versions.is_empty() || already_installed.len() < total_requested;
+            if !self
+                .confirm_reinstall_or_upgrade(confirmation_message, default_yes)
+                .await?
+            {
                 println!("{}", "Installation cancelled by user.".yellow());
-                return Err(PackerError::InstallationFailed("User cancelled installation ".to_string()));
+                return Err(PackerError::InstallationFailed(
+                    "User cancelled installation ".to_string(),
+                ));
             }
         }
         seen_packages.clear();
@@ -1961,11 +2088,21 @@ impl PackageManager {
                 }
             }
             if package.repository == "aur" && package.size == 0 {
-                debug!("Package {} has no size info, trying to get better data from AUR ", name);
-                if let Some(aur_results) = self.repository_manager.search_aur_directly(name, true).await? {
+                debug!(
+                    "Package {} has no size info, trying to get better data from AUR ",
+                    name
+                );
+                if let Some(aur_results) = self
+                    .repository_manager
+                    .search_aur_directly(name, true)
+                    .await?
+                {
                     if let Some(aur_package) = aur_results.into_iter().find(|p| p.name == *name) {
                         if aur_package.size > 0 {
-                            debug!("Updated package {} size from {} to {}", name, package.size, aur_package.size);
+                            debug!(
+                                "Updated package {} size from {} to {}",
+                                name, package.size, aur_package.size
+                            );
                             package = aur_package;
                         }
                     }
@@ -1975,13 +2112,22 @@ impl PackageManager {
             packages_to_install.push(package);
         }
         let installed_packages = self.database.get_all_packages().await?;
-        let installed_only: Vec<Package> = installed_packages.into_iter().map(|(pkg, _)| pkg).collect();
-        let resolution_result = self.resolver
-            .resolve_dependencies_advanced(&packages_to_install, &self.repository_manager, &installed_only)
+        let installed_only: Vec<Package> =
+            installed_packages.into_iter().map(|(pkg, _)| pkg).collect();
+        let resolution_result = self
+            .resolver
+            .resolve_dependencies_advanced(
+                &packages_to_install,
+                &self.repository_manager,
+                &installed_only,
+            )
             .await?;
         let mut all_packages = packages_to_install.clone();
         for additional_package in resolution_result.additional_packages {
-            if !all_packages.iter().any(|p| p.name == additional_package.name) {
+            if !all_packages
+                .iter()
+                .any(|p| p.name == additional_package.name)
+            {
                 all_packages.push(additional_package);
             }
         }
@@ -1990,8 +2136,10 @@ impl PackageManager {
         let download_size: u64 = all_packages.iter().map(|p| p.size).sum();
         Ok(InstallTransaction {
             to_install: all_packages,
-            to_remove: resolution_result.removed_packages.into_iter().map(|name| {
-                Package {
+            to_remove: resolution_result
+                .removed_packages
+                .into_iter()
+                .map(|name| Package {
                     name,
                     version: "unknown".to_string(),
                     description: "".to_string(),
@@ -2021,8 +2169,8 @@ impl PackageManager {
                     },
                     health: PackageHealth::default(),
                     compatibility: CompatibilityInfo::default(),
-                }
-            }).collect(),
+                })
+                .collect(),
             to_upgrade: packages_to_upgrade,
             conflicts: resolution_result.conflicts,
             total_size,
@@ -2066,14 +2214,22 @@ impl PackageManager {
         }
         println!("Verified Signatures: {}", summary.verified_signatures);
         if !summary.unverified_packages.is_empty() {
-            println!("{}: {}", "Unverified Packages ".yellow(), summary.unverified_packages.len());
+            println!(
+                "{}: {}",
+                "Unverified Packages ".yellow(),
+                summary.unverified_packages.len()
+            );
             for pkg in &summary.unverified_packages {
                 println!("  {}", pkg.yellow());
             }
         }
         if !summary.vulnerabilities.is_empty() {
             println!();
-            println!("{} ({})", "Security Vulnerabilities".red().bold(), summary.vulnerabilities.len());
+            println!(
+                "{} ({})",
+                "Security Vulnerabilities".red().bold(),
+                summary.vulnerabilities.len()
+            );
             for vuln in &summary.vulnerabilities {
                 let severity_color = match vuln.severity {
                     VulnerabilitySeverity::Critical => "red",
@@ -2082,10 +2238,12 @@ impl PackageManager {
                     VulnerabilitySeverity::Low => "blue",
                     VulnerabilitySeverity::Info => "cyan",
                 };
-                println!("  {} - {} ({:?})", 
-                    vuln.package.bold(), 
-                    vuln.vulnerability_id.color(severity_color), 
-                    vuln.severity);
+                println!(
+                    "  {} - {} ({:?})",
+                    vuln.package.bold(),
+                    vuln.vulnerability_id.color(severity_color),
+                    vuln.severity
+                );
                 if let Some(ref fixed_version) = vuln.fixed_version {
                     println!("    Fixed in version: {}", fixed_version.green());
                 }
@@ -2101,7 +2259,8 @@ impl PackageManager {
     ) -> PackerResult<()> {
         info!("Removing packages: {:?}", package_names);
         let transaction = if cascade {
-            self.create_cascade_remove_transaction(package_names).await?
+            self.create_cascade_remove_transaction(package_names)
+                .await?
         } else {
             self.create_simple_remove_transaction(package_names).await?
         };
@@ -2123,7 +2282,11 @@ impl PackageManager {
         if installed {
             results.extend(self.database.search_packages(query, exact).await?);
         } else {
-            results.extend(self.repository_manager.search_packages(query, exact).await?);
+            results.extend(
+                self.repository_manager
+                    .search_packages(query, exact)
+                    .await?,
+            );
         }
         Ok(results)
     }
@@ -2137,16 +2300,14 @@ impl PackageManager {
                 .unwrap(),
         );
         self.repository_manager.update_all().await?;
-        self.security_scanner.update_vulnerability_database().await?;
+        self.security_scanner
+            .update_vulnerability_database()
+            .await?;
         pb.finish_with_message("Database updated successfully ");
         info!("Database update completed ");
         Ok(())
     }
-    pub async fn upgrade_packages(
-        &mut self,
-        _force: bool,
-        dry_run: bool,
-    ) -> PackerResult<()> {
+    pub async fn upgrade_packages(&mut self, _force: bool, dry_run: bool) -> PackerResult<()> {
         info!("Upgrading packages ");
         let transaction = self.create_upgrade_transaction().await?;
         if transaction.to_upgrade.is_empty() {
@@ -2183,13 +2344,15 @@ impl PackageManager {
                     .await?
                     .ok_or_else(|| PackerError::PackageNotFound(name.clone()))?;
                 if installed_pkg.version == available_package.version {
-                    println!("📦 {} {} is already installed (same version)", 
-                        name.green().bold(), 
+                    println!(
+                        "📦 {} {} is already installed (same version)",
+                        name.green().bold(),
                         installed_pkg.version.cyan()
                     );
                 } else {
-                    println!("📦 {} {} is installed, {} is available (upgrade)", 
-                        name.green().bold(), 
+                    println!(
+                        "📦 {} {} is installed, {} is available (upgrade)",
+                        name.green().bold(),
                         installed_pkg.version.cyan(),
                         available_package.version.yellow()
                     );
@@ -2197,23 +2360,30 @@ impl PackageManager {
             }
             println!();
             let has_upgrades = already_installed.iter().any(|(name, installed_pkg)| {
-                if let Ok(Some(available)) = futures::executor::block_on(self.repository_manager.get_package(name)) {
+                if let Ok(Some(available)) =
+                    futures::executor::block_on(self.repository_manager.get_package(name))
+                {
                     installed_pkg.version != available.version
                 } else {
                     false
                 }
             });
-                         let total_requested = package_names.len();
-             let confirmation_message = if has_upgrades {
-                 ":: Some packages can be upgraded. Proceed? [Y/n] "
-             } else if already_installed.len() == total_requested {
-                 ":: All packages are already installed with the same versions. Reinstall them? [y/N] "
-             } else {
-                 ":: Some packages are already installed with the same version. Continue with installation? [Y/n] "
-             };
-            if !self.confirm_reinstall_or_upgrade(confirmation_message, has_upgrades).await? {
+            let total_requested = package_names.len();
+            let confirmation_message = if has_upgrades {
+                ":: Some packages can be upgraded. Proceed? [Y/n] "
+            } else if already_installed.len() == total_requested {
+                ":: All packages are already installed with the same versions. Reinstall them? [y/N] "
+            } else {
+                ":: Some packages are already installed with the same version. Continue with installation? [Y/n] "
+            };
+            if !self
+                .confirm_reinstall_or_upgrade(confirmation_message, has_upgrades)
+                .await?
+            {
                 println!("{}", "Installation cancelled by user.".yellow());
-                return Err(PackerError::InstallationFailed("User cancelled installation ".to_string()));
+                return Err(PackerError::InstallationFailed(
+                    "User cancelled installation ".to_string(),
+                ));
             }
         }
         for name in package_names {
@@ -2284,10 +2454,9 @@ impl PackageManager {
     async fn create_upgrade_transaction(&mut self) -> PackerResult<InstallTransaction> {
         let installed = self.database.get_all_packages().await?;
         let mut to_upgrade = Vec::new();
-        let upgrade_checks: Vec<_> = installed.into_par_iter()
-            .filter_map(|package| {
-                Some(package)
-            })
+        let upgrade_checks: Vec<_> = installed
+            .into_par_iter()
+            .filter_map(|package| Some(package))
             .collect();
         for (package, _) in upgrade_checks {
             if let Some(newer) = self.repository_manager.get_newer_version(&package).await? {
@@ -2314,14 +2483,24 @@ impl PackageManager {
         transaction: InstallTransaction,
     ) -> PackerResult<()> {
         let _semaphore = Arc::new(Semaphore::new(self.config.max_parallel_downloads));
-        let aur_packages: Vec<_> = transaction.to_install.iter().filter(|p| p.repository == "aur").collect();
-        let binary_packages: Vec<_> = transaction.to_install.iter().filter(|p| p.repository != "aur").collect();
+        let aur_packages: Vec<_> = transaction
+            .to_install
+            .iter()
+            .filter(|p| p.repository == "aur")
+            .collect();
+        let binary_packages: Vec<_> = transaction
+            .to_install
+            .iter()
+            .filter(|p| p.repository != "aur")
+            .collect();
         println!();
-            println!("{}", "🔄 Installation Progress ".bold());
+        println!("{}", "🔄 Installation Progress ".bold());
         println!("{}", "=".repeat(50));
         if !aur_packages.is_empty() {
-                          println!("{}", "Phase 1: Downloading AUR source tarballs...".cyan());
-              let aur_pb = self.multi_progress.add(ProgressBar::new(aur_packages.len() as u64));
+            println!("{}", "Phase 1: Downloading AUR source tarballs...".cyan());
+            let aur_pb = self
+                .multi_progress
+                .add(ProgressBar::new(aur_packages.len() as u64));
             aur_pb.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} AUR tarballs ")
@@ -2330,7 +2509,10 @@ impl PackageManager {
             let mut aur_downloaded = Vec::new();
             for package in aur_packages {
                 aur_pb.set_message(format!("Downloading {}", package.name));
-                let downloaded = self.repository_manager.download_package(package, &aur_pb).await?;
+                let downloaded = self
+                    .repository_manager
+                    .download_package(package, &aur_pb)
+                    .await?;
                 aur_downloaded.push(downloaded);
                 aur_pb.inc(1);
             }
@@ -2339,7 +2521,9 @@ impl PackageManager {
         }
         if !binary_packages.is_empty() {
             println!("{}", "Phase 2: Downloading binary packages...".cyan());
-            let binary_pb = self.multi_progress.add(ProgressBar::new(binary_packages.len() as u64));
+            let binary_pb = self
+                .multi_progress
+                .add(ProgressBar::new(binary_packages.len() as u64));
             binary_pb.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} Binary packages ")
@@ -2348,20 +2532,32 @@ impl PackageManager {
             let mut binary_downloaded = Vec::new();
             for package in binary_packages {
                 binary_pb.set_message(format!("Downloading {}", package.name));
-                let downloaded = self.repository_manager.download_package(package, &binary_pb).await?;
+                let downloaded = self
+                    .repository_manager
+                    .download_package(package, &binary_pb)
+                    .await?;
                 binary_downloaded.push(downloaded);
                 binary_pb.inc(1);
             }
             binary_pb.finish_with_message("Binary packages downloaded ");
             self.binary_downloads = Some(binary_downloaded);
         }
-        let aur_packages: Vec<_> = transaction.to_install.iter().filter(|p| p.repository == "aur").collect();
-        let binary_packages: Vec<_> = transaction.to_install.iter().filter(|p| p.repository != "aur").collect();
+        let aur_packages: Vec<_> = transaction
+            .to_install
+            .iter()
+            .filter(|p| p.repository == "aur")
+            .collect();
+        let binary_packages: Vec<_> = transaction
+            .to_install
+            .iter()
+            .filter(|p| p.repository != "aur")
+            .collect();
         if !aur_packages.is_empty() {
             println!("{}", "Phase 3: Building AUR packages...".cyan());
             let aur_downloads = self.aur_downloads.take().unwrap_or_default();
             for (package, downloaded_path) in aur_packages.iter().zip(aur_downloads.iter()) {
-                self.install_single_package(package, downloaded_path).await?;
+                self.install_single_package(package, downloaded_path)
+                    .await?;
             }
         }
         if !binary_packages.is_empty() {
@@ -2371,7 +2567,9 @@ impl PackageManager {
                 "Phase 4: Installing binary packages..."
             };
             println!("{}", phase_name.cyan());
-            let install_pb = self.multi_progress.add(ProgressBar::new(binary_packages.len() as u64));
+            let install_pb = self
+                .multi_progress
+                .add(ProgressBar::new(binary_packages.len() as u64));
             install_pb.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
@@ -2380,16 +2578,22 @@ impl PackageManager {
             let binary_downloads = self.binary_downloads.take().unwrap_or_default();
             for (package, downloaded_path) in binary_packages.iter().zip(binary_downloads.iter()) {
                 install_pb.set_message(format!("Installing {}", package.name));
-                self.install_single_package(package, downloaded_path).await?;
+                self.install_single_package(package, downloaded_path)
+                    .await?;
                 install_pb.inc(1);
             }
             install_pb.finish_with_message("Binary packages installed ");
         }
-        self.transaction_cache.write().await.insert(transaction.transaction_id.clone(), transaction);
+        self.transaction_cache
+            .write()
+            .await
+            .insert(transaction.transaction_id.clone(), transaction);
         Ok(())
     }
     async fn execute_remove_transaction(&mut self, packages: Vec<Package>) -> PackerResult<()> {
-        let pb = self.multi_progress.add(ProgressBar::new(packages.len() as u64));
+        let pb = self
+            .multi_progress
+            .add(ProgressBar::new(packages.len() as u64));
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} Removing packages ")
@@ -2426,28 +2630,43 @@ impl PackageManager {
         self.execute_install_transaction(new_transaction).await?;
         Ok(())
     }
-    async fn install_single_package(&mut self, package: &Package, path: &PathBuf) -> PackerResult<()> {
-        info!("Installing package: {} {} from {}", package.name, package.version, path.display());
-        
+    async fn install_single_package(
+        &mut self,
+        package: &Package,
+        path: &PathBuf,
+    ) -> PackerResult<()> {
+        info!(
+            "Installing package: {} {} from {}",
+            package.name,
+            package.version,
+            path.display()
+        );
+
         if !path.exists() {
             return Err(PackerError::InstallationFailed(format!(
-                "Package file does not exist: {}", path.display()
+                "Package file does not exist: {}",
+                path.display()
             )));
         }
 
         let extraction_result = self.extract_and_install_package(package, path).await?;
-        
+
         let mut updated_package = package.clone();
         updated_package.installed_size = extraction_result.bytes_extracted;
         updated_package.install_date = Some(Utc::now());
-        
-        self.database.add_package_with_transaction(
-            updated_package, 
-            InstallReason::Explicit, 
-            "manual-install".to_string()
-        ).await?;
-        
-        info!("Successfully installed package: {} {}", package.name, package.version);
+
+        self.database
+            .add_package_with_transaction(
+                updated_package,
+                InstallReason::Explicit,
+                "manual-install".to_string(),
+            )
+            .await?;
+
+        info!(
+            "Successfully installed package: {} {}",
+            package.name, package.version
+        );
         Ok(())
     }
 
@@ -2476,10 +2695,14 @@ impl PackageManager {
                 if !remove_result.status.success() {
                     let stderr = String::from_utf8_lossy(&remove_result.stderr);
                     return Err(PackerError::RemovalFailed(format!(
-                        "Failed to remove AUR package {}: {}", package.name, stderr
+                        "Failed to remove AUR package {}: {}",
+                        package.name, stderr
                     )));
                 }
-                info!("Successfully removed AUR package {} using pacman ", package.name);
+                info!(
+                    "Successfully removed AUR package {} using pacman ",
+                    package.name
+                );
                 bytes_freed = package.installed_size;
                 files_removed = package.files.len();
             } else {
@@ -2488,7 +2711,11 @@ impl PackageManager {
         } else {
             let install_root = self.config.install_root.clone();
             let mut directories_to_check = Vec::new();
-            debug!("Removing {} tracked files for package {}", package.files.len(), package.name);
+            debug!(
+                "Removing {} tracked files for package {}",
+                package.files.len(),
+                package.name
+            );
             for file in &package.files {
                 debug!("Processing file: {}", file.path);
                 let mut paths_to_try = Vec::new();
@@ -2526,7 +2753,10 @@ impl PackageManager {
                     }
                 }
                 if !file_found {
-                    warn!("File not found for removal: {} (tried paths: {:?})", file.path, paths_to_try);
+                    warn!(
+                        "File not found for removal: {} (tried paths: {:?})",
+                        file.path, paths_to_try
+                    );
                 }
             }
             directories_to_check.sort();
@@ -2556,15 +2786,20 @@ impl PackageManager {
             self.run_package_script(script, "post-remove ").await?;
         }
         self.database.remove_package(&package.name).await?;
-        info!("Removed package: {} {} ({} files, {} freed)", 
-              package.name, package.version, files_removed, self.format_size(bytes_freed));
+        info!(
+            "Removed package: {} {} ({} files, {} freed)",
+            package.name,
+            package.version,
+            files_removed,
+            self.format_size(bytes_freed)
+        );
         Ok(())
     }
     async fn is_directory_empty(&self, dir: &PathBuf) -> PackerResult<bool> {
         let mut entries = tokio::fs::read_dir(dir).await?;
         match entries.next_entry().await? {
-            Some(_) => Ok(false), 
-            None => Ok(true),     
+            Some(_) => Ok(false),
+            None => Ok(true),
         }
     }
     async fn verify_package_checksum(&self, package: &Package, path: &PathBuf) -> PackerResult<()> {
@@ -2592,7 +2827,11 @@ impl PackageManager {
         }
         Ok(())
     }
-    async fn extract_and_install_package(&mut self, package: &Package, path: &PathBuf) -> PackerResult<crate::utils::ExtractionResult> {
+    async fn extract_and_install_package(
+        &mut self,
+        package: &Package,
+        path: &PathBuf,
+    ) -> PackerResult<crate::utils::ExtractionResult> {
         let install_dir = self.config.install_root.clone();
         if let Some(ref script) = package.scripts.pre_install {
             self.run_package_script(script, "pre-install ").await?;
@@ -2600,11 +2839,16 @@ impl PackageManager {
         let extraction_result = if package.repository == "aur" {
             self.build_and_install_aur_package(package, path).await?
         } else {
-            info!("Extracting package {} to {}", package.name, self.config.install_root.display());
+            info!(
+                "Extracting package {} to {}",
+                package.name,
+                self.config.install_root.display()
+            );
             let result = extract_archive(path, &install_dir).await?;
-            info!("Extracted {} files ({} bytes)", 
-                  result.files_extracted, 
-                  result.bytes_extracted);
+            info!(
+                "Extracted {} files ({} bytes)",
+                result.files_extracted, result.bytes_extracted
+            );
             result
         };
         if let Some(ref script) = package.scripts.post_install {
@@ -2612,7 +2856,11 @@ impl PackageManager {
         }
         Ok(extraction_result)
     }
-    async fn build_and_install_aur_package(&mut self, package: &Package, path: &PathBuf) -> PackerResult<crate::utils::ExtractionResult> {
+    async fn build_and_install_aur_package(
+        &mut self,
+        package: &Package,
+        path: &PathBuf,
+    ) -> PackerResult<crate::utils::ExtractionResult> {
         info!("Building AUR package: {}", package.name);
         let temp_dir = tempfile::tempdir()?;
         let build_dir = temp_dir.path();
@@ -2620,23 +2868,36 @@ impl PackageManager {
         extract_archive(path, build_dir).await?;
         let package_dir = build_dir.join(&package.name);
         if !package_dir.exists() {
-//             return Err(PackerError::InstallationFailed(format!(
-//                 "Package directory {} not found after extraction ", package.name
-//             )));
+            //             return Err(PackerError::InstallationFailed(format!(
+            //                 "Package directory {} not found after extraction ", package.name
+            //             )));
         }
-        
+
         if !self.gpg_manager.should_skip_signature_check() {
             if let Err(e) = self.import_required_gpg_keys(&package_dir).await {
                 warn!("Failed to import some GPG keys: {}", e);
-                println!("{}", "  -> Some GPG keys could not be imported, but continuing...".yellow());
+                println!(
+                    "{}",
+                    "  -> Some GPG keys could not be imported, but continuing...".yellow()
+                );
             }
         }
-        
+
         println!();
-            println!("{}", format!("🏗️  Building AUR package: {} {}", package.name, package.version).bold());
+        println!(
+            "{}",
+            format!(
+                "🏗️  Building AUR package: {} {}",
+                package.name, package.version
+            )
+            .bold()
+        );
         println!("{}", "=".repeat(60));
         println!("{}", "Phase 1: Downloading source files...".cyan());
-        println!("{}", "  -> Downloading source files and dependencies...".yellow());
+        println!(
+            "{}",
+            "  -> Downloading source files and dependencies...".yellow()
+        );
         let download_pb = self.multi_progress.add(ProgressBar::new(0));
         download_pb.set_style(
             ProgressStyle::default_bar()
@@ -2646,17 +2907,19 @@ impl PackageManager {
         download_pb.set_message("Preparing download...".to_string());
         let download_args = self.get_makepkg_download_args();
         let download_args_str: Vec<&str> = download_args.iter().map(|s| s.as_str()).collect();
-        let download_result = self.run_makepkg_with_realistic_progress(
-            &package_dir,
-            &download_args_str,
-            &download_pb,
-            "Downloading sources"
-        ).await?;
+        let download_result = self
+            .run_makepkg_with_realistic_progress(
+                &package_dir,
+                &download_args_str,
+                &download_pb,
+                "Downloading sources",
+            )
+            .await?;
         download_pb.finish_with_message("Source download completed");
         if !download_result {
-//             return Err(PackerError::InstallationFailed(format!(
-//                 "Source download failed for {}", package.name
-//             )));
+            //             return Err(PackerError::InstallationFailed(format!(
+            //                 "Source download failed for {}", package.name
+            //             )));
         }
         println!("{}", "Phase 2: Building package...".cyan());
         println!("{}", "  -> Compiling source code...".yellow());
@@ -2669,40 +2932,51 @@ impl PackageManager {
         build_pb.set_message("Building package...".to_string());
         let build_args = self.get_makepkg_build_args();
         let build_args_str: Vec<&str> = build_args.iter().map(|s| s.as_str()).collect();
-        let build_result = self.run_makepkg_with_realistic_progress(
-            &package_dir,
-            &build_args_str,
-            &build_pb,
-            "Building"
-        ).await?;
+        let build_result = self
+            .run_makepkg_with_realistic_progress(
+                &package_dir,
+                &build_args_str,
+                &build_pb,
+                "Building",
+            )
+            .await?;
         build_pb.finish_with_message("Build completed");
         if !build_result {
-//             return Err(PackerError::InstallationFailed(format!(
-//                 "Build failed for {}", package.name
-//             )));
+            //             return Err(PackerError::InstallationFailed(format!(
+            //                 "Build failed for {}", package.name
+            //             )));
         }
         println!("{}", "Phase 3: Locating built packages...".cyan());
         let built_packages = self.find_built_packages(&package_dir).await?;
         if built_packages.is_empty() {
-//             return Err(PackerError::InstallationFailed(format!(
-//                 "No built packages found for {}", package.name
-//             )));
+            //             return Err(PackerError::InstallationFailed(format!(
+            //                 "No built packages found for {}", package.name
+            //             )));
         }
-        println!("{}", format!("  -> Found {} built package(s)", built_packages.len()).green());
+        println!(
+            "{}",
+            format!("  -> Found {} built package(s)", built_packages.len()).green()
+        );
         println!("{}", "Phase 4: Installing built packages...".cyan());
-        let install_pb = self.multi_progress.add(ProgressBar::new(built_packages.len() as u64));
+        let install_pb = self
+            .multi_progress
+            .add(ProgressBar::new(built_packages.len() as u64));
         install_pb.set_style(
             ProgressStyle::default_bar()
                 .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} Installing packages ")
                 .unwrap(),
         );
-        
+
         let mut total_bytes_extracted = 0;
-        
+
         for (i, pkg_file) in built_packages.iter().enumerate() {
-            install_pb.set_message(format!("Installing package {}/{}", i + 1, built_packages.len()));
+            install_pb.set_message(format!(
+                "Installing package {}/{}",
+                i + 1,
+                built_packages.len()
+            ));
             info!("Installing package file with pacman: {:?}", pkg_file);
-            
+
             let install_result = tokio::process::Command::new("sudo")
                 .arg("pacman")
                 .arg("-U")
@@ -2710,24 +2984,32 @@ impl PackageManager {
                 .arg(pkg_file)
                 .output()
                 .await?;
-            
+
             if !install_result.status.success() {
                 let stderr = String::from_utf8_lossy(&install_result.stderr);
                 return Err(PackerError::InstallationFailed(format!(
-                    "Failed to install built package {}: {}", pkg_file.display(), stderr
+                    "Failed to install built package {}: {}",
+                    pkg_file.display(),
+                    stderr
                 )));
             }
-            
+
             if let Ok(metadata) = tokio::fs::metadata(pkg_file).await {
                 total_bytes_extracted += metadata.len();
             }
-            
+
             install_pb.inc(1);
-            info!("Successfully installed package file with pacman: {:?}", pkg_file);
+            info!(
+                "Successfully installed package file with pacman: {:?}",
+                pkg_file
+            );
         }
         install_pb.finish_with_message("Package installation completed ");
-        println!("{}", format!("✅ Successfully built and installed {}", package.name).green());
-        
+        println!(
+            "{}",
+            format!("✅ Successfully built and installed {}", package.name).green()
+        );
+
         Ok(crate::utils::ExtractionResult {
             files_extracted: 1, // Installed with pacman
             bytes_extracted: total_bytes_extracted,
@@ -2783,8 +3065,8 @@ impl PackageManager {
         progress_bar: &ProgressBar,
         phase_name: &str,
     ) -> PackerResult<bool> {
-        use tokio::process::Command;
         use tokio::io::{AsyncBufReadExt, BufReader};
+        use tokio::process::Command;
         let mut cmd = Command::new("makepkg");
         for arg in args {
             cmd.arg(arg);
@@ -2792,8 +3074,11 @@ impl PackageManager {
         cmd.current_dir(package_dir);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
-        
-        eprintln!("🐛 DEBUG: Running makepkg with args: {:?} in {:?}", args, package_dir);
+
+        eprintln!(
+            "🐛 DEBUG: Running makepkg with args: {:?} in {:?}",
+            args, package_dir
+        );
         eprintln!("🐛 DEBUG: Directory exists: {}", package_dir.exists());
         if package_dir.exists() {
             if let Ok(entries) = std::fs::read_dir(package_dir) {
@@ -2805,7 +3090,7 @@ impl PackageManager {
                 }
             }
         }
-        
+
         info!("Running makepkg with args: {:?} in {:?}", args, package_dir);
         let mut child = cmd.spawn()?;
         progress_bar.set_style(
@@ -2848,7 +3133,8 @@ impl PackageManager {
                     } else if line.contains("downloading") || line.contains("Downloading") {
                         pb_for_stdout.set_message("Downloading dependencies...".to_string());
                     }
-                    if line.contains("%") && (line.contains("Downloaded") || line.contains("curl")) {
+                    if line.contains("%") && (line.contains("Downloaded") || line.contains("curl"))
+                    {
                         if let Some(progress_info) = Self::parse_curl_progress(&line) {
                             if progress_info.total_bytes > 0 {
                                 pb_for_stdout.set_length(progress_info.total_bytes);
@@ -2858,10 +3144,10 @@ impl PackageManager {
                         }
                     }
                     if line.contains("downloading") && line.contains("...") {
-                        total_bytes_downloaded += 1024 * 1024; 
+                        total_bytes_downloaded += 1024 * 1024;
                         pb_for_stdout.set_position(total_bytes_downloaded);
                         if pb_for_stdout.length() == Some(0) {
-                            pb_for_stdout.set_length(total_bytes_downloaded * 2); 
+                            pb_for_stdout.set_length(total_bytes_downloaded * 2);
                         }
                     }
                     if line.contains("ERROR ") || line.contains("FAILED") {
@@ -2871,7 +3157,9 @@ impl PackageManager {
                     }
                 }
             }))
-        } else { None };
+        } else {
+            None
+        };
         let pb_for_stderr = progress_bar.clone();
         let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
         let stderr_handle = if let Some(stderr) = child.stderr.take() {
@@ -2881,17 +3169,23 @@ impl PackageManager {
                 let mut _total_bytes_downloaded = 0u64;
                 while let Ok(Some(line)) = lines.next_line().await {
                     let _ = error_tx.send(line.clone());
-                    
+
                     if line.contains("%") && (line.contains("100") || line.contains("Total ")) {
                         if let Some(progress_info) = Self::parse_curl_progress(&line) {
                             if progress_info.total_bytes > 0 {
                                 pb_for_stderr.set_length(progress_info.total_bytes);
                                 pb_for_stderr.set_position(progress_info.downloaded_bytes);
-                                pb_for_stderr.set_message(format!("Downloading... {:.1}%", progress_info.percentage));
+                                pb_for_stderr.set_message(format!(
+                                    "Downloading... {:.1}%",
+                                    progress_info.percentage
+                                ));
                             }
                         }
                     }
-                    if line.contains("% Total ") || line.contains("Dload") || line.contains("downloading") {
+                    if line.contains("% Total ")
+                        || line.contains("Dload")
+                        || line.contains("downloading")
+                    {
                         pb_for_stderr.set_message("Downloading...".to_string());
                     }
                     if line.contains("ERROR ") || line.contains("error") {
@@ -2899,43 +3193,43 @@ impl PackageManager {
                     }
                 }
             }))
-        } else { None };
-        let status = match tokio::time::timeout(
-            std::time::Duration::from_secs(1800), 
-            child.wait()
-        ).await {
-            Ok(status) => status?,
-            Err(_) => {
-                progress_bar.set_message(format!("{} timed out ", phase_name));
-                warn!("makepkg process timed out after 30 minutes ");
-                let _ = child.kill().await;
-                return Ok(false);
-            }
+        } else {
+            None
         };
+        let status =
+            match tokio::time::timeout(std::time::Duration::from_secs(1800), child.wait()).await {
+                Ok(status) => status?,
+                Err(_) => {
+                    progress_bar.set_message(format!("{} timed out ", phase_name));
+                    warn!("makepkg process timed out after 30 minutes ");
+                    let _ = child.kill().await;
+                    return Ok(false);
+                }
+            };
         if let Some(handle) = stdout_handle {
             let _ = handle.await;
         }
         if let Some(handle) = stderr_handle {
             let _ = handle.await;
         }
-        
+
         let mut stderr_lines = Vec::new();
         while let Ok(line) = error_rx.try_recv() {
             stderr_lines.push(line);
         }
-        
+
         let mut stdout_lines = Vec::new();
         while let Ok(line) = stdout_rx.try_recv() {
             stdout_lines.push(line);
         }
-        
+
         let success = status.success();
         if success {
             progress_bar.set_message(format!("{} completed successfully ", phase_name));
         } else {
             progress_bar.set_message(format!("{} failed ", phase_name));
             warn!("makepkg failed with exit code: {:?}", status.code());
-            
+
             if !stdout_lines.is_empty() {
                 eprintln!("\n🐛 DEBUG: makepkg stdout output:");
                 for line in stdout_lines.iter().take(15) {
@@ -2945,7 +3239,7 @@ impl PackageManager {
                     eprintln!("  ... ({} more lines)", stdout_lines.len() - 15);
                 }
             }
-            
+
             if !stderr_lines.is_empty() {
                 eprintln!("\n🐛 DEBUG: makepkg stderr output:");
                 for line in stderr_lines.iter().take(15) {
@@ -2958,28 +3252,30 @@ impl PackageManager {
         }
         Ok(success)
     }
-    async fn find_built_packages(&self, package_dir: &std::path::Path) -> PackerResult<Vec<PathBuf>> {
+    async fn find_built_packages(
+        &self,
+        package_dir: &std::path::Path,
+    ) -> PackerResult<Vec<PathBuf>> {
         eprintln!("🐛 DEBUG: Looking for built packages in: {:?}", package_dir);
-        
+
         if let Ok(mut debug_entries) = tokio::fs::read_dir(package_dir).await {
             eprintln!("🐛 DEBUG: All files in build directory:");
             while let Ok(Some(entry)) = debug_entries.next_entry().await {
                 eprintln!("  {:?}", entry.file_name());
             }
         }
-        
+
         let mut built_packages = Vec::new();
         let mut entries = tokio::fs::read_dir(package_dir).await?;
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            let filename = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            
-            if filename.ends_with(".pkg.tar.xz") || 
-               filename.ends_with(".pkg.tar.zst") ||
-               filename.ends_with(".pkg.tar.gz") ||
-               filename.ends_with(".pkg.tar.bz2") {
+            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+            if filename.ends_with(".pkg.tar.xz")
+                || filename.ends_with(".pkg.tar.zst")
+                || filename.ends_with(".pkg.tar.gz")
+                || filename.ends_with(".pkg.tar.bz2")
+            {
                 eprintln!("🐛 DEBUG: Found built package: {:?}", filename);
                 built_packages.push(path);
             }
@@ -2988,13 +3284,12 @@ impl PackageManager {
             let mut entries = tokio::fs::read_dir(package_dir).await?;
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                let filename = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-                if filename.ends_with(".pkg.tar.xz") || 
-                   filename.ends_with(".pkg.tar.zst") ||
-                   filename.ends_with(".pkg.tar.gz") ||
-                   filename.ends_with(".pkg.tar.bz2") {
+                let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if filename.ends_with(".pkg.tar.xz")
+                    || filename.ends_with(".pkg.tar.zst")
+                    || filename.ends_with(".pkg.tar.gz")
+                    || filename.ends_with(".pkg.tar.bz2")
+                {
                     built_packages.push(path);
                 }
             }
@@ -3020,10 +3315,7 @@ impl PackageManager {
     }
 
     fn get_makepkg_build_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "--noconfirm".to_string(),
-            "--needed".to_string(),
-        ];
+        let mut args = vec!["--noconfirm".to_string(), "--needed".to_string()];
 
         // skipping integrity checks for now - this could be configurable in the future
         args.push("--skipinteg".to_string());
@@ -3044,20 +3336,22 @@ impl PackageManager {
             return Ok(()); // No PKGBUILD file, nothing to do
         }
 
-        let pkgbuild_content = tokio::fs::read_to_string(&pkgbuild_path).await
+        let pkgbuild_content = tokio::fs::read_to_string(&pkgbuild_path)
+            .await
             .map_err(|e| PackerError::ConfigError(format!("Failed to read PKGBUILD: {}", e)))?;
 
         let mut keys_to_import = Vec::new();
-        
+
         for line in pkgbuild_content.lines() {
             let line = line.trim();
             if line.starts_with("validpgpkeys=") {
                 let keys_part = line.strip_prefix("validpgpkeys=").unwrap_or("");
                 let keys_part = keys_part.trim_start_matches('(').trim_end_matches(')');
-                
+
                 for key in keys_part.split_whitespace() {
                     let key = key.trim_matches('\'').trim_matches('"');
-                    if !key.is_empty() && key.len() >= 8 { // valid key IDs are at least 8 chars
+                    if !key.is_empty() && key.len() >= 8 {
+                        // valid key IDs are at least 8 chars
                         keys_to_import.push(key.to_string());
                     }
                 }
@@ -3070,8 +3364,11 @@ impl PackageManager {
             return Ok(());
         }
 
-        println!("{}", format!("  -> Importing {} GPG key(s)...", keys_to_import.len()).yellow());
-        
+        println!(
+            "{}",
+            format!("  -> Importing {} GPG key(s)...", keys_to_import.len()).yellow()
+        );
+
         let mut successful_imports = 0;
         for key_id in &keys_to_import {
             match self.gpg_manager.import_key(key_id).await {
@@ -3086,14 +3383,24 @@ impl PackageManager {
         }
 
         if successful_imports > 0 {
-            println!("{}", format!("  -> Successfully imported {}/{} GPG key(s)", 
-                                   successful_imports, keys_to_import.len()).green());
+            println!(
+                "{}",
+                format!(
+                    "  -> Successfully imported {}/{} GPG key(s)",
+                    successful_imports,
+                    keys_to_import.len()
+                )
+                .green()
+            );
         }
 
         Ok(())
     }
 
-    pub async fn import_gpg_keys(&mut self, key_ids: &[String]) -> PackerResult<Vec<crate::gpg_manager::GPGKeyInfo>> {
+    pub async fn import_gpg_keys(
+        &mut self,
+        key_ids: &[String],
+    ) -> PackerResult<Vec<crate::gpg_manager::GPGKeyInfo>> {
         let mut imported_keys = Vec::new();
         for key_id in key_ids {
             match self.gpg_manager.import_key(key_id).await {
@@ -3110,27 +3417,44 @@ impl PackageManager {
 
     pub async fn get_gpg_status(&self) -> PackerResult<String> {
         let mut status = String::new();
-        
+
         status.push_str("🔐 GPG System Status:\n");
-        status.push_str(&format!("  Keyring path: {:?}\n", self.gpg_manager.get_keyring_path()));
-        status.push_str(&format!("  Auto-import keys: {}\n", self.gpg_manager.get_config().auto_import_keys));
-        status.push_str(&format!("  Require signatures: {}\n", self.gpg_manager.get_config().require_signatures));
-        status.push_str(&format!("  Minimum trust level: {}\n", self.gpg_manager.get_config().minimum_trust_level));
-        
+        status.push_str(&format!(
+            "  Keyring path: {:?}\n",
+            self.gpg_manager.get_keyring_path()
+        ));
+        status.push_str(&format!(
+            "  Auto-import keys: {}\n",
+            self.gpg_manager.get_config().auto_import_keys
+        ));
+        status.push_str(&format!(
+            "  Require signatures: {}\n",
+            self.gpg_manager.get_config().require_signatures
+        ));
+        status.push_str(&format!(
+            "  Minimum trust level: {}\n",
+            self.gpg_manager.get_config().minimum_trust_level
+        ));
+
         let trusted_keys = self.gpg_manager.get_trusted_keys();
         status.push_str(&format!("  Trusted keys: {}\n", trusted_keys.len()));
-        
+
         if !trusted_keys.is_empty() {
             status.push_str("  Key details:\n");
             for (id, key) in trusted_keys.iter().take(5) {
-                status.push_str(&format!("    • {} ({}) - {}\n", 
-                    id, key.user_id, key.trust_level));
+                status.push_str(&format!(
+                    "    • {} ({}) - {}\n",
+                    id, key.user_id, key.trust_level
+                ));
             }
             if trusted_keys.len() > 5 {
-                status.push_str(&format!("    ... and {} more keys\n", trusted_keys.len() - 5));
+                status.push_str(&format!(
+                    "    ... and {} more keys\n",
+                    trusted_keys.len() - 5
+                ));
             }
         }
-        
+
         Ok(status)
     }
 
@@ -3140,18 +3464,36 @@ impl PackageManager {
         } else {
             format!("[{}]", operation)
         };
-        
+
         info!("{} Configuration:", prefix);
         info!("  • Verify checksums: {}", self.config.verify_checksums);
         info!("  • Verify signatures: {}", self.config.verify_signatures);
-        info!("  • Allow untrusted repos: {}", self.config.security_policy.allow_untrusted_repos);
-        info!("  • Scan for vulnerabilities: {}", self.config.security_policy.scan_for_vulnerabilities);
-        info!("  • Block high-risk packages: {}", self.config.security_policy.block_high_risk_packages);
-        
+        info!(
+            "  • Allow untrusted repos: {}",
+            self.config.security_policy.allow_untrusted_repos
+        );
+        info!(
+            "  • Scan for vulnerabilities: {}",
+            self.config.security_policy.scan_for_vulnerabilities
+        );
+        info!(
+            "  • Block high-risk packages: {}",
+            self.config.security_policy.block_high_risk_packages
+        );
+
         if self.config.verify_signatures {
-            info!("  • GPG auto-import: {}", self.gpg_manager.get_config().auto_import_keys);
-            info!("  • GPG minimum trust: {}", self.gpg_manager.get_config().minimum_trust_level);
-            info!("  • GPG keyservers: {:?}", self.gpg_manager.get_config().keyservers);
+            info!(
+                "  • GPG auto-import: {}",
+                self.gpg_manager.get_config().auto_import_keys
+            );
+            info!(
+                "  • GPG minimum trust: {}",
+                self.gpg_manager.get_config().minimum_trust_level
+            );
+            info!(
+                "  • GPG keyservers: {:?}",
+                self.gpg_manager.get_config().keyservers
+            );
         }
     }
 
@@ -3168,7 +3510,8 @@ impl PackageManager {
             }
         }
         for package in &binary_packages {
-            println!("  {} {} ({}) [{}]",
+            println!(
+                "  {} {} ({}) [{}]",
                 package.name.bold(),
                 package.version,
                 self.format_size(package.size),
@@ -3176,7 +3519,8 @@ impl PackageManager {
             );
         }
         for package in &aur_packages {
-            println!("  {} {} (AUR source package) [{}]",
+            println!(
+                "  {} {} (AUR source package) [{}]",
                 package.name.bold(),
                 package.version,
                 package.repository
@@ -3195,20 +3539,38 @@ impl PackageManager {
         println!("  Packages to install: {}", transaction.to_install.len());
         if aur_count > 0 {
             if binary_download_size > 0 {
-                println!("  Binary package downloads: {}", self.format_size(binary_download_size));
+                println!(
+                    "  Binary package downloads: {}",
+                    self.format_size(binary_download_size)
+                );
             }
-            println!("  AUR packages: {} (download size determined during build)", aur_count);
+            println!(
+                "  AUR packages: {} (download size determined during build)",
+                aur_count
+            );
         } else {
-            println!("  Total download size: {}", self.format_size(binary_download_size));
+            println!(
+                "  Total download size: {}",
+                self.format_size(binary_download_size)
+            );
         }
-        println!("  Total installed size: {}", self.format_size(transaction.total_size));
+        println!(
+            "  Total installed size: {}",
+            self.format_size(transaction.total_size)
+        );
     }
     async fn confirm_installation(&self, transaction: &InstallTransaction) -> PackerResult<bool> {
         use std::io::{self, Write};
         let has_aur_packages = transaction.to_install.iter().any(|p| p.repository == "aur");
         if has_aur_packages {
-            println!("{}", ":: Some packages are from AUR and will require building.".yellow());
-            println!("{}", ":: Root privileges will be required to install built packages.".yellow());
+            println!(
+                "{}",
+                ":: Some packages are from AUR and will require building.".yellow()
+            );
+            println!(
+                "{}",
+                ":: Root privileges will be required to install built packages.".yellow()
+            );
         }
         print!("{}", ":: Proceed with installation? [Y/n] ".bold());
         io::stdout().flush().unwrap();
@@ -3217,7 +3579,11 @@ impl PackageManager {
         let input = input.trim().to_lowercase();
         Ok(input.is_empty() || input == "y" || input == "yes")
     }
-    async fn confirm_reinstall_or_upgrade(&self, message: &str, default_yes: bool) -> PackerResult<bool> {
+    async fn confirm_reinstall_or_upgrade(
+        &self,
+        message: &str,
+        default_yes: bool,
+    ) -> PackerResult<bool> {
         use std::io::{self, Write};
         print!("{}", message.bold());
         io::stdout().flush().unwrap();
@@ -3230,14 +3596,22 @@ impl PackageManager {
             Ok(input == "y" || input == "yes")
         }
     }
-    async fn record_transaction_result(&mut self, transaction_id: String, success: bool, duration: u64, error: Option<&PackerError>) -> PackerResult<()> {
-        use crate::storage::{TransactionPackage, PackageOperation, RollbackInfo};
+    async fn record_transaction_result(
+        &mut self,
+        transaction_id: String,
+        success: bool,
+        duration: u64,
+        error: Option<&PackerError>,
+    ) -> PackerResult<()> {
+        use crate::storage::{PackageOperation, RollbackInfo, TransactionPackage};
         let transaction_cache = self.transaction_cache.read().await;
         let transaction = transaction_cache.get(&transaction_id).cloned();
         drop(transaction_cache);
         if let Some(transaction) = transaction {
-            let transaction_packages: Vec<TransactionPackage> = transaction.to_install.iter().map(|pkg| {
-                TransactionPackage {
+            let transaction_packages: Vec<TransactionPackage> = transaction
+                .to_install
+                .iter()
+                .map(|pkg| TransactionPackage {
                     name: pkg.name.clone(),
                     version: pkg.version.clone(),
                     repository: pkg.repository.clone(),
@@ -3246,14 +3620,22 @@ impl PackageManager {
                     files: pkg.files.iter().map(|f| f.path.clone()).collect(),
                     dependencies: pkg.dependencies.iter().map(|d| d.name.clone()).collect(),
                     conflicts: pkg.conflicts.clone(),
-                }
-            }).collect();
-            let size_change: i64 = transaction.to_install.iter().map(|p| p.installed_size as i64).sum();
+                })
+                .collect();
+            let size_change: i64 = transaction
+                .to_install
+                .iter()
+                .map(|p| p.installed_size as i64)
+                .sum();
             let rollback_info = if success {
                 Some(RollbackInfo {
                     can_rollback: true,
                     rollback_commands: vec![],
-                    affected_packages: transaction.to_install.iter().map(|p| p.name.clone()).collect(),
+                    affected_packages: transaction
+                        .to_install
+                        .iter()
+                        .map(|p| p.name.clone())
+                        .collect(),
                     dependencies_to_restore: vec![],
                 })
             } else {
@@ -3271,7 +3653,11 @@ impl PackageManager {
                 size_change,
                 security_score: transaction.security_summary.trust_score,
                 rollback_info,
-                status: if success { crate::storage::TransactionStatus::Completed } else { crate::storage::TransactionStatus::Failed },
+                status: if success {
+                    crate::storage::TransactionStatus::Completed
+                } else {
+                    crate::storage::TransactionStatus::Failed
+                },
                 progress: crate::storage::TransactionProgress::default(),
                 compatibility_checked: true,
                 health_verified: true,
@@ -3280,7 +3666,10 @@ impl PackageManager {
         }
         Ok(())
     }
-    async fn scan_aur_installation(&self, package_name: &str) -> PackerResult<crate::utils::ExtractionResult> {
+    async fn scan_aur_installation(
+        &self,
+        package_name: &str,
+    ) -> PackerResult<crate::utils::ExtractionResult> {
         use crate::utils::ExtractionResult;
         let mut extracted_files = Vec::new();
         let mut total_size = 0u64;
@@ -3299,13 +3688,24 @@ impl PackageManager {
             search_dirs.push(install_root.join("share "));
             search_dirs.push(install_root.join("etc "));
         }
-        info!("Scanning directories for package {}: {:?}", package_name, search_dirs);
+        info!(
+            "Scanning directories for package {}: {:?}",
+            package_name, search_dirs
+        );
         for dir in search_dirs {
             if dir.exists() {
-                extracted_files.extend(self.scan_directory_for_package(&dir, package_name, &mut total_size).await?);
+                extracted_files.extend(
+                    self.scan_directory_for_package(&dir, package_name, &mut total_size)
+                        .await?,
+                );
             }
         }
-        info!("Found {} files ({} bytes) for package {}", extracted_files.len(), total_size, package_name);
+        info!(
+            "Found {} files ({} bytes) for package {}",
+            extracted_files.len(),
+            total_size,
+            package_name
+        );
         Ok(ExtractionResult {
             files_extracted: extracted_files.len(),
             bytes_extracted: total_size,
@@ -3313,13 +3713,19 @@ impl PackageManager {
             extraction_time: std::time::Duration::from_secs(0),
         })
     }
-    async fn scan_directory_for_package(&self, dir: &PathBuf, package_name: &str, total_size: &mut u64) -> PackerResult<Vec<crate::utils::ExtractedFile>> {
+    async fn scan_directory_for_package(
+        &self,
+        dir: &PathBuf,
+        package_name: &str,
+        total_size: &mut u64,
+    ) -> PackerResult<Vec<crate::utils::ExtractedFile>> {
         use crate::utils::ExtractedFile;
         let mut files = Vec::new();
         if let Ok(mut entries) = tokio::fs::read_dir(dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                if path.file_name()
+                if path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .map(|name| name.contains(package_name))
                     .unwrap_or(false)
@@ -3340,7 +3746,14 @@ impl PackageManager {
                         *total_size += metadata.len();
                     }
                     if path.is_dir() {
-                        files.extend(Box::pin(self.scan_directory_for_package(&path, package_name, total_size)).await?);
+                        files.extend(
+                            Box::pin(self.scan_directory_for_package(
+                                &path,
+                                package_name,
+                                total_size,
+                            ))
+                            .await?,
+                        );
                     }
                 }
             }
@@ -3373,22 +3786,27 @@ impl PackageManager {
             .await?;
         if !output.status.success() {
             let _stderr = String::from_utf8_lossy(&output.stderr);
-//             return Err(PackerError::InstallationFailed(format!(
-//                 "{} script failed: {}", script_type, stderr
-//             )));
+            //             return Err(PackerError::InstallationFailed(format!(
+            //                 "{} script failed: {}", script_type, stderr
+            //             )));
         }
         Ok(())
     }
     fn show_transaction_summary(&self, transaction: &InstallTransaction) {
         println!();
-            println!("{}", "Transaction Summary ".bold().blue());
+        println!("{}", "Transaction Summary ".bold().blue());
         println!("{}", "=".repeat(50));
         println!("Transaction ID: {}", transaction.transaction_id.dimmed());
         if !transaction.to_install.is_empty() {
             println!();
             println!("{}", "Packages to install:".green());
             for package in &transaction.to_install {
-                println!("  {} {} [{}]", package.name, package.version, package.repository.cyan());
+                println!(
+                    "  {} {} [{}]",
+                    package.name,
+                    package.version,
+                    package.repository.cyan()
+                );
             }
         }
         if !transaction.to_remove.is_empty() {
@@ -3406,54 +3824,77 @@ impl PackageManager {
             }
         }
         println!();
-            println!("{}", "Size Information:".cyan());
-        println!("  Download size: {}", self.format_size(transaction.download_size));
-        println!("  Installed size: {}", self.format_size(transaction.total_size));
+        println!("{}", "Size Information:".cyan());
+        println!(
+            "  Download size: {}",
+            self.format_size(transaction.download_size)
+        );
+        println!(
+            "  Installed size: {}",
+            self.format_size(transaction.total_size)
+        );
     }
     fn show_remove_transaction_summary(&self, packages: &[Package]) {
         println!();
-            println!("{}", "Removal Summary ".bold().red());
+        println!("{}", "Removal Summary ".bold().red());
         println!("{}", "=".repeat(50));
         println!();
-            println!("{}", "Packages to remove:".red());
+        println!("{}", "Packages to remove:".red());
         for package in packages {
             println!("  {} {}", package.name, package.version);
         }
         let total_size: u64 = packages.iter().map(|p| p.installed_size).sum();
         println!();
-            println!("{}", "Size Information:".cyan());
+        println!("{}", "Size Information:".cyan());
         println!("  Space to be freed: {}", self.format_size(total_size));
     }
     fn show_upgrade_transaction_summary(&self, transaction: &InstallTransaction) {
         println!();
-            println!("{}", "Upgrade Summary ".bold().yellow());
+        println!("{}", "Upgrade Summary ".bold().yellow());
         println!("{}", "=".repeat(50));
         println!();
-            println!("{}", "Packages to upgrade:".yellow());
+        println!("{}", "Packages to upgrade:".yellow());
         for (old, new) in &transaction.to_upgrade {
             println!("  {} {} -> {}", old.name, old.version, new.version);
         }
         println!();
-            println!("{}", "Size Information:".cyan());
-        println!("  Download size: {}", self.format_size(transaction.download_size));
-        println!("  Net size change: {}", self.format_size(transaction.total_size));
+        println!("{}", "Size Information:".cyan());
+        println!(
+            "  Download size: {}",
+            self.format_size(transaction.download_size)
+        );
+        println!(
+            "  Net size change: {}",
+            self.format_size(transaction.total_size)
+        );
     }
     fn format_size(&self, bytes: u64) -> String {
         crate::utils::format_size(bytes)
     }
     pub async fn rollback_transaction(&mut self, transaction_id: &str) -> PackerResult<()> {
         info!("Rolling back transaction: {}", transaction_id);
-        let transaction = self.database.get_transaction_by_id(transaction_id)
-            .ok_or_else(|| PackerError::DatabaseError(format!("Transaction {} not found ", transaction_id)))?;
+        let transaction = self
+            .database
+            .get_transaction_by_id(transaction_id)
+            .ok_or_else(|| {
+                PackerError::DatabaseError(format!("Transaction {} not found ", transaction_id))
+            })?;
         let rollback_info = if let Some(ref rollback_info) = transaction.rollback_info {
             if !rollback_info.can_rollback {
-                return Err(PackerError::DatabaseError("Transaction cannot be rolled back ".to_string()));
+                return Err(PackerError::DatabaseError(
+                    "Transaction cannot be rolled back ".to_string(),
+                ));
             }
             rollback_info.clone()
         } else {
-            return Err(PackerError::DatabaseError("No rollback information available for this transaction ".to_string()));
+            return Err(PackerError::DatabaseError(
+                "No rollback information available for this transaction ".to_string(),
+            ));
         };
-        println!("{}", format!("🔄 Rolling back transaction: {}", transaction_id).yellow());
+        println!(
+            "{}",
+            format!("🔄 Rolling back transaction: {}", transaction_id).yellow()
+        );
         let rollback_commands = rollback_info.rollback_commands.clone();
         let packages = transaction.packages.clone();
         let size_change = transaction.size_change;
@@ -3465,8 +3906,14 @@ impl PackageManager {
                     self.database.remove_package(&command.package_name).await?;
                 }
                 crate::storage::RollbackCommandType::InstallPackage => {
-                    println!("  📦 Restoring package: {} {}", command.package_name, command.package_version);
-                    info!("Restoring package {} {} (not implemented)", command.package_name, command.package_version);
+                    println!(
+                        "  📦 Restoring package: {} {}",
+                        command.package_name, command.package_version
+                    );
+                    info!(
+                        "Restoring package {} {} (not implemented)",
+                        command.package_name, command.package_version
+                    );
                 }
                 crate::storage::RollbackCommandType::RestoreFiles => {
                     println!("  📁 Restoring {} files ", command.files_to_restore.len());
@@ -3498,14 +3945,17 @@ impl PackageManager {
             user: whoami::username(),
             size_change: -size_change,
             security_score: security_score,
-            rollback_info: None, 
+            rollback_info: None,
             status: crate::storage::TransactionStatus::Completed,
             progress: crate::storage::TransactionProgress::default(),
             compatibility_checked: false,
             health_verified: false,
         };
         self.database.add_transaction(rollback_transaction).await?;
-        println!("{}", "✅ Transaction rollback completed successfully ".green());
+        println!(
+            "{}",
+            "✅ Transaction rollback completed successfully ".green()
+        );
         Ok(())
     }
     pub async fn get_package_info(&self, package_name: &str) -> PackerResult<Option<Package>> {
@@ -3514,7 +3964,9 @@ impl PackageManager {
     pub async fn is_package_installed(&self, package_name: &str) -> PackerResult<bool> {
         Ok(self.database.get_package(package_name).await?.is_some())
     }
-    pub async fn list_installed_packages(&self) -> PackerResult<Vec<(Package, crate::storage::InstallReason)>> {
+    pub async fn list_installed_packages(
+        &self,
+    ) -> PackerResult<Vec<(Package, crate::storage::InstallReason)>> {
         self.database.get_all_packages().await
     }
     pub async fn check_package_upgrade(&self, package_name: &str) -> PackerResult<Option<Package>> {
@@ -3524,7 +3976,11 @@ impl PackageManager {
             Ok(None)
         }
     }
-    pub async fn upgrade_packages_by_names(&mut self, package_names: Vec<String>, force: bool) -> PackerResult<()> {
+    pub async fn upgrade_packages_by_names(
+        &mut self,
+        package_names: Vec<String>,
+        force: bool,
+    ) -> PackerResult<()> {
         let mut packages_to_upgrade = Vec::new();
         for package_name in package_names {
             if let Some(upgrade) = self.check_package_upgrade(&package_name).await? {
@@ -3534,8 +3990,10 @@ impl PackageManager {
         if packages_to_upgrade.is_empty() {
             return Ok(());
         }
-        let package_names: Vec<String> = packages_to_upgrade.iter().map(|p| p.name.clone()).collect();
-        self.install_packages(&package_names, force, false, false).await
+        let package_names: Vec<String> =
+            packages_to_upgrade.iter().map(|p| p.name.clone()).collect();
+        self.install_packages(&package_names, force, false, false)
+            .await
     }
     pub async fn check_upgrades(&self) -> PackerResult<Vec<(Package, Package)>> {
         let installed_packages = self.list_installed_packages().await?;
@@ -3549,15 +4007,24 @@ impl PackageManager {
     }
     pub async fn check_conflicts(&self) -> PackerResult<Vec<String>> {
         let installed_packages = self.list_installed_packages().await?;
-        let package_names: Vec<String> = installed_packages.iter().map(|(p, _)| p.name.clone()).collect();
+        let package_names: Vec<String> = installed_packages
+            .iter()
+            .map(|(p, _)| p.name.clone())
+            .collect();
         let conflict_result = self.resolver.check_conflicts(&package_names).await?;
         Ok(conflict_result.conflicts)
     }
     pub async fn list_repositories(&self) -> PackerResult<Vec<crate::repository::RepositoryInfo>> {
         Ok(self.repository_manager.get_repository_info())
     }
-    pub async fn update_repository(&mut self, repository_name: &str, force: bool) -> PackerResult<()> {
-        self.repository_manager.update_repository(repository_name, force).await
+    pub async fn update_repository(
+        &mut self,
+        repository_name: &str,
+        force: bool,
+    ) -> PackerResult<()> {
+        self.repository_manager
+            .update_repository(repository_name, force)
+            .await
     }
     pub fn get_cache_dir(&self) -> std::path::PathBuf {
         self.config.cache_dir.clone()
@@ -3573,13 +4040,20 @@ impl PackageManager {
     }
     pub async fn reinstall_package(&mut self, package_name: &str) -> PackerResult<()> {
         info!("Reinstalling package: {}", package_name);
-        let current_package = self.database.get_package(package_name).await?
+        let current_package = self
+            .database
+            .get_package(package_name)
+            .await?
             .ok_or_else(|| PackerError::PackageNotInstalled(package_name.to_string()))?;
         self.remove_single_package(&current_package).await?;
-        let _package_to_install = self.repository_manager.get_package(package_name).await?
+        let _package_to_install = self
+            .repository_manager
+            .get_package(package_name)
+            .await?
             .ok_or_else(|| PackerError::PackageNotFound(package_name.to_string()))?;
         let package_names = vec![package_name.to_string()];
-            self.install_packages(&package_names, false, false, false).await?;
+        self.install_packages(&package_names, false, false, false)
+            .await?;
         info!("Package {} reinstalled successfully ", package_name);
         Ok(())
     }
@@ -3592,11 +4066,15 @@ impl PackageManager {
                 match self.scan_aur_installation(&package.name).await {
                     Ok(scan_result) => {
                         if scan_result.bytes_extracted != package.installed_size {
-                            info!("Updating size for {}: {} -> {}", 
-                                  package.name, 
-                                  self.format_size(package.installed_size),
-                                  self.format_size(scan_result.bytes_extracted));
-                            self.database.update_package_size(&package.name, scan_result.bytes_extracted).await?;
+                            info!(
+                                "Updating size for {}: {} -> {}",
+                                package.name,
+                                self.format_size(package.installed_size),
+                                self.format_size(scan_result.bytes_extracted)
+                            );
+                            self.database
+                                .update_package_size(&package.name, scan_result.bytes_extracted)
+                                .await?;
                             updated_count += 1;
                         }
                     }
@@ -3623,22 +4101,41 @@ impl PackageManager {
         info!("Database fix completed ");
         Ok(())
     }
-    pub async fn update_package_size(&mut self, package_name: &str, new_size: u64) -> PackerResult<()> {
-        self.database.update_package_size(package_name, new_size).await
+    pub async fn update_package_size(
+        &mut self,
+        package_name: &str,
+        new_size: u64,
+    ) -> PackerResult<()> {
+        self.database
+            .update_package_size(package_name, new_size)
+            .await
     }
-    pub async fn check_package_compatibility(&self, package: &Package) -> PackerResult<CompatibilityInfo> {
+    pub async fn check_package_compatibility(
+        &self,
+        package: &Package,
+    ) -> PackerResult<CompatibilityInfo> {
         let mut compatibility = CompatibilityInfo::default();
         let system_arch = self.get_system_architecture();
         let arch_compatible = self.is_architecture_compatible(&package.arch, &system_arch);
         let system_os = self.get_system_os();
         let os_compatible = self.is_os_compatible(&package.compatibility.target_os, &system_os);
-        let requirements_met = self.check_system_requirements(&package.compatibility.system_requirements).await?;
+        let requirements_met = self
+            .check_system_requirements(&package.compatibility.system_requirements)
+            .await?;
         let incompatible_packages = self.find_incompatible_packages(package).await?;
         let mut score = 1.0;
-        if !arch_compatible { score *= 0.0; }
-        if !os_compatible { score *= 0.5; }
-        if !requirements_met { score *= 0.3; }
-        if !incompatible_packages.is_empty() { score *= 0.7; }
+        if !arch_compatible {
+            score *= 0.0;
+        }
+        if !os_compatible {
+            score *= 0.5;
+        }
+        if !requirements_met {
+            score *= 0.3;
+        }
+        if !incompatible_packages.is_empty() {
+            score *= 0.7;
+        }
         compatibility.target_arch = package.arch.clone();
         compatibility.target_os = package.compatibility.target_os.clone();
         compatibility.incompatible_packages = incompatible_packages;
@@ -3711,8 +4208,8 @@ impl PackageManager {
             (p_arch, s_arch) if p_arch == s_arch => true,
             ("x86_64", "x86_64") => true,
             ("amd64", "x86_64") => true,
-            ("i686", "x86_64") => true, 
-            ("i386", "x86_64") => true, 
+            ("i686", "x86_64") => true,
+            ("i386", "x86_64") => true,
             ("aarch64", "aarch64") => true,
             ("arm64", "aarch64") => true,
             _ => false,
@@ -3728,7 +4225,10 @@ impl PackageManager {
             _ => false,
         }
     }
-    async fn check_system_requirements(&self, requirements: &SystemRequirements) -> PackerResult<bool> {
+    async fn check_system_requirements(
+        &self,
+        requirements: &SystemRequirements,
+    ) -> PackerResult<bool> {
         if let Some(min_memory) = requirements.min_memory_mb {
             let available_memory = self.get_available_memory().await?;
             if available_memory < min_memory * 1024 * 1024 {
@@ -3786,10 +4286,10 @@ impl PackageManager {
         Ok(true)
     }
     async fn get_available_memory(&self) -> PackerResult<u64> {
-        Ok(8 * 1024 * 1024 * 1024) 
+        Ok(8 * 1024 * 1024 * 1024)
     }
     async fn get_available_disk_space(&self) -> PackerResult<u64> {
-        Ok(100 * 1024 * 1024 * 1024) 
+        Ok(100 * 1024 * 1024 * 1024)
     }
     async fn is_library_available(&self, _lib: &str) -> PackerResult<bool> {
         Ok(true)
@@ -3805,13 +4305,19 @@ impl PackageManager {
         if let Some(package) = self.database.get_package(package_name).await? {
             let health = self.check_package_health(&package).await?;
             if health.health_score < 0.5 {
-                info!("Package {} health score is low ({}), attempting recovery ", package_name, health.health_score);
+                info!(
+                    "Package {} health score is low ({}), attempting recovery ",
+                    package_name, health.health_score
+                );
                 self.repair_package(&package).await?;
                 let new_health = self.check_package_health(&package).await?;
                 if new_health.health_score >= 0.5 {
                     info!("Package {} successfully recovered ", package_name);
                 } else {
-                    warn!("Package {} recovery partially successful, may need reinstallation ", package_name);
+                    warn!(
+                        "Package {} recovery partially successful, may need reinstallation ",
+                        package_name
+                    );
                 }
             } else {
                 info!("Package {} is healthy, no recovery needed ", package_name);
@@ -3824,20 +4330,36 @@ impl PackageManager {
     pub async fn repair_package(&mut self, package: &Package) -> PackerResult<()> {
         info!("Repairing package: {}", package.name);
         if !self.verify_package_integrity(package).await? {
-            info!("Package {} has integrity issues, attempting to fix ", package.name);
+            info!(
+                "Package {} has integrity issues, attempting to fix ",
+                package.name
+            );
             if let Ok(newer_version) = self.repository_manager.get_package(&package.name).await {
                 if let Some(repo_package) = newer_version {
                     info!("Re-downloading package {} for repair ", package.name);
-                    let progress_bar = self.multi_progress.add(indicatif::ProgressBar::new(repo_package.size));
+                    let progress_bar = self
+                        .multi_progress
+                        .add(indicatif::ProgressBar::new(repo_package.size));
                     progress_bar.set_style(ProgressStyle::default_bar()
                         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
                         .unwrap());
-                    let download_path = self.repository_manager.download_package(&repo_package, &progress_bar).await?;
-                    if self.verify_package_checksum(&repo_package, &download_path).await.is_ok() {
-                        self.install_single_package(&repo_package, &download_path).await?;
+                    let download_path = self
+                        .repository_manager
+                        .download_package(&repo_package, &progress_bar)
+                        .await?;
+                    if self
+                        .verify_package_checksum(&repo_package, &download_path)
+                        .await
+                        .is_ok()
+                    {
+                        self.install_single_package(&repo_package, &download_path)
+                            .await?;
                         info!("Package {} successfully repaired ", package.name);
                     } else {
-                        return Err(PackerError::RecoveryFailed(format!("Downloaded package {} failed verification ", package.name)));
+                        return Err(PackerError::RecoveryFailed(format!(
+                            "Downloaded package {} failed verification ",
+                            package.name
+                        )));
                     }
                     progress_bar.finish_with_message("Repair completed ");
                 }
@@ -3852,7 +4374,10 @@ impl PackageManager {
         for (package, _) in installed_packages {
             let health = self.check_package_health(&package).await?;
             if health.health_score < 0.7 {
-                info!("Package {} needs repair (health score: {})", package.name, health.health_score);
+                info!(
+                    "Package {} needs repair (health score: {})",
+                    package.name, health.health_score
+                );
                 match self.repair_package(&package).await {
                     Ok(_) => {
                         repaired_packages.push(package.name.clone());
@@ -3864,7 +4389,10 @@ impl PackageManager {
                 }
             }
         }
-        info!("Auto-repair completed. Repaired {} packages ", repaired_packages.len());
+        info!(
+            "Auto-repair completed. Repaired {} packages ",
+            repaired_packages.len()
+        );
         Ok(repaired_packages)
     }
     pub async fn emergency_recovery(&mut self) -> PackerResult<()> {
@@ -3891,8 +4419,11 @@ impl PackageManager {
         // TODO: implement snapshot restoration
         Ok(())
     }
-    
-        pub async fn _restore_from_snapshot_disabled(&mut self, _snapshot_id: &str) -> PackerResult<()> {
+
+    pub async fn _restore_from_snapshot_disabled(
+        &mut self,
+        _snapshot_id: &str,
+    ) -> PackerResult<()> {
         // TODO: implement snapshot restoration
         Ok(())
     }

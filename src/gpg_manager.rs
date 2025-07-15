@@ -1,13 +1,13 @@
-use crate::error::{PackerError, PackerResult};
 use crate::config::Config;
+use crate::error::{PackerError, PackerResult};
 use chrono::{DateTime, Utc};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use tokio::process::Command;
 use tokio::fs;
+use tokio::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GPGKeyInfo {
@@ -145,7 +145,9 @@ impl Default for GPGConfig {
 impl GPGManager {
     pub fn new(config: Config) -> Self {
         let gpg_config = GPGConfig {
-            keyring_path: config.gpg_config.keyring_path
+            keyring_path: config
+                .gpg_config
+                .keyring_path
                 .as_ref()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| GPGConfig::default().keyring_path),
@@ -156,7 +158,9 @@ impl GPGManager {
             },
             auto_import_keys: config.gpg_config.auto_import_keys,
             require_signatures: config.security_policy.require_signatures,
-            minimum_trust_level: TrustLevel::from_gpg_string(&config.gpg_config.minimum_trust_level),
+            minimum_trust_level: TrustLevel::from_gpg_string(
+                &config.gpg_config.minimum_trust_level,
+            ),
             ..GPGConfig::default()
         };
 
@@ -169,9 +173,12 @@ impl GPGManager {
 
     pub async fn initialize(&mut self) -> PackerResult<()> {
         info!("Initializing GPG manager");
-        
+
         if let Err(e) = fs::create_dir_all(&self.keyring_path).await {
-            warn!("Failed to create GPG directory {:?}: {}", self.keyring_path, e);
+            warn!(
+                "Failed to create GPG directory {:?}: {}",
+                self.keyring_path, e
+            );
         }
 
         if !self.is_gpg_available().await? {
@@ -181,11 +188,18 @@ impl GPGManager {
 
         self.load_trusted_keys().await?;
 
-        info!("GPG manager initialized with {} trusted keys", self.trusted_keys.len());
+        info!(
+            "GPG manager initialized with {} trusted keys",
+            self.trusted_keys.len()
+        );
         Ok(())
     }
 
-    pub async fn verify_package_signature(&self, package_path: &Path, signature_path: Option<&Path>) -> PackerResult<SignatureVerificationResult> {
+    pub async fn verify_package_signature(
+        &self,
+        package_path: &Path,
+        signature_path: Option<&Path>,
+    ) -> PackerResult<SignatureVerificationResult> {
         if !self.is_gpg_available().await? {
             return Ok(SignatureVerificationResult {
                 verified: false,
@@ -220,37 +234,57 @@ impl GPGManager {
             sig_file
         };
 
-        self.verify_detached_signature(package_path, &sig_path).await
+        self.verify_detached_signature(package_path, &sig_path)
+            .await
     }
 
-    async fn verify_detached_signature(&self, file_path: &Path, signature_path: &Path) -> PackerResult<SignatureVerificationResult> {
-        debug!("Verifying signature for {:?} with {:?}", file_path, signature_path);
+    async fn verify_detached_signature(
+        &self,
+        file_path: &Path,
+        signature_path: &Path,
+    ) -> PackerResult<SignatureVerificationResult> {
+        debug!(
+            "Verifying signature for {:?} with {:?}",
+            file_path, signature_path
+        );
 
         let mut cmd = Command::new("gpg");
         cmd.env("GNUPGHOME", &self.keyring_path)
-           .arg("--batch")
-           .arg("--no-tty")
-           .arg("--status-fd").arg("2")
-           .arg("--verify")
-           .arg(signature_path)
-           .arg(file_path)
-           .stdout(Stdio::piped())
-           .stderr(Stdio::piped());
+            .arg("--batch")
+            .arg("--no-tty")
+            .arg("--status-fd")
+            .arg("2")
+            .arg("--verify")
+            .arg(signature_path)
+            .arg(file_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         let output = match tokio::time::timeout(
             std::time::Duration::from_secs(self.config.signature_timeout_secs),
-            cmd.output()
-        ).await {
+            cmd.output(),
+        )
+        .await
+        {
             Ok(result) => result?,
-            Err(_) => return Err(PackerError::TimeoutError("GPG signature verification timed out".to_string())),
+            Err(_) => {
+                return Err(PackerError::TimeoutError(
+                    "GPG signature verification timed out".to_string(),
+                ))
+            }
         };
 
-        self.parse_verification_output(&output.stderr, &output.stdout).await
+        self.parse_verification_output(&output.stderr, &output.stdout)
+            .await
     }
 
-    async fn parse_verification_output(&self, stderr: &[u8], _stdout: &[u8]) -> PackerResult<SignatureVerificationResult> {
+    async fn parse_verification_output(
+        &self,
+        stderr: &[u8],
+        _stdout: &[u8],
+    ) -> PackerResult<SignatureVerificationResult> {
         let stderr_str = String::from_utf8_lossy(stderr);
-        
+
         let mut result = SignatureVerificationResult {
             verified: false,
             key_id: None,
@@ -290,11 +324,15 @@ impl GPGManager {
                     }
                     "TRUST_UNKNOWN" => {
                         result.trust_level = TrustLevel::Unknown;
-                        result.warnings.push("Key trust level is unknown".to_string());
+                        result
+                            .warnings
+                            .push("Key trust level is unknown".to_string());
                     }
                     "TRUST_NEVER" => {
                         result.trust_level = TrustLevel::Never;
-                        result.errors.push("Key is marked as never trusted".to_string());
+                        result
+                            .errors
+                            .push("Key is marked as never trusted".to_string());
                     }
                     "TRUST_MARGINAL" => {
                         result.trust_level = TrustLevel::Marginal;
@@ -308,13 +346,19 @@ impl GPGManager {
                     "NO_PUBKEY" => {
                         if parts.len() > 1 {
                             missing_key_id = Some(parts[1].to_string());
-                            result.errors.push(format!("Public key {} not found", parts[1]));
+                            result
+                                .errors
+                                .push(format!("Public key {} not found", parts[1]));
                         }
                     }
                     "EXPKEYSIG" => {
-                        result.warnings.push("Signature made by expired key".to_string());
+                        result
+                            .warnings
+                            .push("Signature made by expired key".to_string());
                         if !self.config.allow_expired_keys {
-                            result.errors.push("Expired key signatures not allowed".to_string());
+                            result
+                                .errors
+                                .push("Expired key signatures not allowed".to_string());
                         }
                     }
                     "KEYEXPIRED" => {
@@ -336,24 +380,36 @@ impl GPGManager {
                 info!("Attempting to auto-import missing key: {}", key_id);
                 match self.import_key(&key_id).await {
                     Ok(key_info) => {
-                        info!("Successfully imported key: {} ({})", key_info.id, key_info.user_id);
-                        result.warnings.push("Key was automatically imported, consider manual verification".to_string());
+                        info!(
+                            "Successfully imported key: {} ({})",
+                            key_info.id, key_info.user_id
+                        );
+                        result.warnings.push(
+                            "Key was automatically imported, consider manual verification"
+                                .to_string(),
+                        );
                         // it marks as partially successful since it imported the key
                         result.key_id = Some(key_info.id);
                         result.trust_level = key_info.trust_level;
-                        result.verified = result.trust_level.is_acceptable(&self.config.minimum_trust_level);
+                        result.verified = result
+                            .trust_level
+                            .is_acceptable(&self.config.minimum_trust_level);
                     }
                     Err(e) => {
                         warn!("Failed to import key {}: {}", key_id, e);
-                        result.errors.push(format!("Failed to import required key: {}", e));
+                        result
+                            .errors
+                            .push(format!("Failed to import required key: {}", e));
                     }
                 }
             }
         }
 
-        result.verified = signature_valid && 
-                         result.trust_level.is_acceptable(&self.config.minimum_trust_level) &&
-                         result.errors.is_empty();
+        result.verified = signature_valid
+            && result
+                .trust_level
+                .is_acceptable(&self.config.minimum_trust_level)
+            && result.errors.is_empty();
 
         Ok(result)
     }
@@ -373,34 +429,48 @@ impl GPGManager {
         }
 
         Err(PackerError::SecurityError(format!(
-            "Failed to import key {} from any keyserver", key_id
+            "Failed to import key {} from any keyserver",
+            key_id
         )))
     }
 
-    async fn import_from_keyserver(&self, key_id: &str, keyserver: &str) -> PackerResult<GPGKeyInfo> {
+    async fn import_from_keyserver(
+        &self,
+        key_id: &str,
+        keyserver: &str,
+    ) -> PackerResult<GPGKeyInfo> {
         debug!("Importing key {} from keyserver {}", key_id, keyserver);
 
         let mut cmd = Command::new("gpg");
         cmd.env("GNUPGHOME", &self.keyring_path)
-           .arg("--batch")
-           .arg("--no-tty")
-           .arg("--keyserver").arg(keyserver)
-           .arg("--recv-keys").arg(key_id)
-           .stdout(Stdio::piped())
-           .stderr(Stdio::piped());
+            .arg("--batch")
+            .arg("--no-tty")
+            .arg("--keyserver")
+            .arg(keyserver)
+            .arg("--recv-keys")
+            .arg(key_id)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         let output = match tokio::time::timeout(
             std::time::Duration::from_secs(60), // Longer timeout for key import
-            cmd.output()
-        ).await {
+            cmd.output(),
+        )
+        .await
+        {
             Ok(result) => result?,
-            Err(_) => return Err(PackerError::TimeoutError("GPG key import timed out".to_string())),
+            Err(_) => {
+                return Err(PackerError::TimeoutError(
+                    "GPG key import timed out".to_string(),
+                ))
+            }
         };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(PackerError::SecurityError(format!(
-                "Failed to import key from {}: {}", keyserver, stderr
+                "Failed to import key from {}: {}",
+                keyserver, stderr
             )));
         }
 
@@ -410,18 +480,19 @@ impl GPGManager {
     async fn get_key_info(&self, key_id: &str) -> PackerResult<GPGKeyInfo> {
         let mut cmd = Command::new("gpg");
         cmd.env("GNUPGHOME", &self.keyring_path)
-           .arg("--batch")
-           .arg("--no-tty")
-           .arg("--with-colons")
-           .arg("--list-keys")
-           .arg(key_id)
-           .stdout(Stdio::piped())
-           .stderr(Stdio::piped());
+            .arg("--batch")
+            .arg("--no-tty")
+            .arg("--with-colons")
+            .arg("--list-keys")
+            .arg(key_id)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         let output = cmd.output().await?;
         if !output.status.success() {
             return Err(PackerError::SecurityError(format!(
-                "Failed to get key info for {}", key_id
+                "Failed to get key info for {}",
+                key_id
             )));
         }
 
@@ -441,10 +512,14 @@ impl GPGManager {
                     let key_size = fields[2].parse::<u32>().unwrap_or(0);
                     let key_type = fields[3].to_string();
                     let key_id = fields[4].to_string();
-                    let creation_time = fields[5].parse::<i64>().ok()
+                    let creation_time = fields[5]
+                        .parse::<i64>()
+                        .ok()
                         .and_then(|ts| DateTime::from_timestamp(ts, 0));
                     let expiration_time = if !fields[6].is_empty() {
-                        fields[6].parse::<i64>().ok()
+                        fields[6]
+                            .parse::<i64>()
+                            .ok()
                             .and_then(|ts| DateTime::from_timestamp(ts, 0))
                     } else {
                         None
@@ -487,17 +562,17 @@ impl GPGManager {
     pub async fn list_keys(&self) -> PackerResult<Vec<GPGKeyInfo>> {
         let mut cmd = Command::new("gpg");
         cmd.env("GNUPGHOME", &self.keyring_path)
-           .arg("--batch")
-           .arg("--no-tty")
-           .arg("--with-colons")
-           .arg("--list-keys")
-           .stdout(Stdio::piped())
-           .stderr(Stdio::piped());
+            .arg("--batch")
+            .arg("--no-tty")
+            .arg("--with-colons")
+            .arg("--list-keys")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         let output = cmd.output().await?;
         if !output.status.success() {
             return Err(PackerError::SecurityError(
-                "Failed to list GPG keys".to_string()
+                "Failed to list GPG keys".to_string(),
             ));
         }
 
@@ -511,7 +586,9 @@ impl GPGManager {
                 if let Some(key) = current_key.take() {
                     keys.push(key);
                 }
-                if let Ok(key) = self.parse_key_info(&format!("{}\\nuid:::::::::::{}\\n", line, current_uid)) {
+                if let Ok(key) =
+                    self.parse_key_info(&format!("{}\\nuid:::::::::::{}\\n", line, current_uid))
+                {
                     current_key = Some(key);
                 }
             } else if line.starts_with("uid:") {
@@ -576,4 +653,4 @@ impl GPGManager {
     pub fn get_config(&self) -> &GPGConfig {
         &self.config
     }
-} 
+}

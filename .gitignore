@@ -1,0 +1,73 @@
+# Rust
+/target/
+# Note: Cargo.lock should be committed for binary projects
+*.rs.bk
+*.pdb
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+*.logs
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Package manager
+node_modules/
+
+# Local configuration
+.env
+.env.local
+
+# Build artifacts
+dist/
+build/
+
+# Backup files
+*.bak
+*.backup
+
+# Cache directories
+.cache/
+*.cache
+
+# Testing
+.nyc_output
+coverage/
+
+# Compiled files
+*.o
+*.so
+*.dylib
+*.dll
+
+# Development scripts (add back any you want to keep)
+fix_*.sh
+fix_*.py
+comprehensive_fix.*
+*_fix.*
+
+# Installation logs
+install.log
+*.log
+
+# Temporary directories
+tmp/
+temp/ 

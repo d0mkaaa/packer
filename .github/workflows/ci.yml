@@ -21,7 +21,6 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: 1.83
         components: rustfmt, clippy
         
     - name: Cache dependencies
@@ -53,8 +52,6 @@ jobs:
       
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: 1.83
         
     - name: Cache dependencies
       uses: actions/cache@v3
@@ -100,9 +97,8 @@ jobs:
       uses: actions/checkout@v4
       
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@beta
       with:
-        toolchain: 1.83
         components: llvm-tools-preview
         
     - name: Install cargo-llvm-cov

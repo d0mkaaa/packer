@@ -21,7 +21,7 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: 1.75
+        toolchain: 1.83
         components: rustfmt, clippy
         
     - name: Cache dependencies
@@ -54,7 +54,7 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: 1.75
+        toolchain: 1.83
         
     - name: Cache dependencies
       uses: actions/cache@v3

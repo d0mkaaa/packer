@@ -2706,7 +2706,10 @@ impl PackageManager {
                 bytes_freed = package.installed_size;
                 files_removed = package.files.len();
             } else {
-                warn!("AUR package {} not found in pacman database, it may have been removed manually ", package.name);
+                warn!(
+                    "AUR package {} not found in pacman database, it may have been removed manually ",
+                    package.name
+                );
             }
         } else {
             let install_root = self.config.install_root.clone();

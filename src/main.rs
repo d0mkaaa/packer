@@ -1158,7 +1158,9 @@ async fn handle_list(
             if e.to_string().contains("No such file or directory") {
                 println!("Installed Packages: 0 total");
                 println!("{}", "=".repeat(60));
-                println!("No packages installed yet. Install a package first with: packer install <package>");
+                println!(
+                    "No packages installed yet. Install a package first with: packer install <package>"
+                );
                 return Ok(());
             } else {
                 return Err(e.into());
@@ -1215,7 +1217,9 @@ async fn handle_list(
             println!("Installed Packages: {} total", filtered_packages.len());
             println!("{}", "=".repeat(60));
             if filtered_packages.is_empty() {
-                println!("No packages installed yet. Install a package first with: packer install <package>");
+                println!(
+                    "No packages installed yet. Install a package first with: packer install <package>"
+                );
                 return Ok(());
             }
             let mut total_size = 0u64;
@@ -1820,20 +1824,26 @@ fn handle_completion(shell: &str) -> Result<(), Box<dyn std::error::Error>> {
     match shell {
         "bash" => {
             println!("# Bash completion for packer");
-            println!("complete -W 'install remove search info list update upgrade check clean repos transaction security doctor complete' packer");
+            println!(
+                "complete -W 'install remove search info list update upgrade check clean repos transaction security doctor complete' packer"
+            );
         }
         "zsh" => {
             println!("# Zsh completion for packer");
             println!("#compdef packer");
             println!("_packer() {{");
-            println!("  local commands=(install remove search info list update upgrade check clean repos transaction security doctor complete)");
+            println!(
+                "  local commands=(install remove search info list update upgrade check clean repos transaction security doctor complete)"
+            );
             println!("  _describe 'commands' commands");
             println!("}}");
             println!("_packer");
         }
         "fish" => {
             println!("# Fish completion for packer");
-            println!("complete -c packer -n '__fish_use_subcommand' -a 'install remove search info list update upgrade check clean repos transaction security doctor complete'");
+            println!(
+                "complete -c packer -n '__fish_use_subcommand' -a 'install remove search info list update upgrade check clean repos transaction security doctor complete'"
+            );
         }
         _ => {
             println!("Unsupported shell: {}", shell);

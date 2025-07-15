@@ -270,7 +270,7 @@ impl GPGManager {
             Err(_) => {
                 return Err(PackerError::TimeoutError(
                     "GPG signature verification timed out".to_string(),
-                ))
+                ));
             }
         };
 
@@ -462,7 +462,7 @@ impl GPGManager {
             Err(_) => {
                 return Err(PackerError::TimeoutError(
                     "GPG key import timed out".to_string(),
-                ))
+                ));
             }
         };
 

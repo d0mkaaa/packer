@@ -1,4 +1,4 @@
-use crate::{error::PackerResult, PACKER_CONFIG};
+use crate::{PACKER_CONFIG, error::PackerResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;

@@ -480,16 +480,16 @@ fn default_repositories() -> Vec<RepositoryConfig> {
         },
         // aur repository
         RepositoryConfig {
-        name: "aur".to_string(),
-        url: "https://aur.archlinux.org/".to_string(),
-        enabled: true,
+            name: "aur".to_string(),
+            url: "https://aur.archlinux.org/".to_string(),
+            enabled: true,
             priority: 10,
-        repo_type: RepositoryType::AUR,
-        trust_level: TrustLevel::Community,
-        mirror_urls: vec!["https://aur.archlinux.org/".to_string()],
-        arch: Some("any".to_string()),
-        siglevel: Some("Never".to_string()),
-        }
+            repo_type: RepositoryType::AUR,
+            trust_level: TrustLevel::Community,
+            mirror_urls: vec!["https://aur.archlinux.org/".to_string()],
+            arch: Some("any".to_string()),
+            siglevel: Some("Never".to_string()),
+        },
     ]
 }
 

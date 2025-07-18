@@ -5,10 +5,10 @@ use crate::{
     native_db::NativePackageDatabase,
 };
 use chrono::{DateTime, Utc};
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use log::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorePackage {
@@ -30,10 +30,10 @@ pub struct CorePackage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SourceType {
-    Official,  // From official repositories (use pacman)
-    AUR,       // From AUR (build from source)  
-    Binary,    // Direct binary download
-    Github,    // GitHub releases
+    Official, // From official repositories (use pacman)
+    AUR,      // From AUR (build from source)
+    Binary,   // Direct binary download
+    Github,   // GitHub releases
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,8 +70,11 @@ impl PackageDatabase {
             if let Ok(data) = serde_json::from_str::<DatabaseContent>(&content) {
                 self.installed = data.installed;
                 self.available = data.available;
-                info!("Loaded {} installed and {} available packages", 
-                      self.installed.len(), self.available.len());
+                info!(
+                    "Loaded {} installed and {} available packages",
+                    self.installed.len(),
+                    self.available.len()
+                );
             }
         }
         Ok(())
@@ -116,8 +119,8 @@ impl PackageDatabase {
         self.available
             .values()
             .filter(|pkg| {
-                pkg.name.to_lowercase().contains(&query_lower) ||
-                pkg.description.to_lowercase().contains(&query_lower)
+                pkg.name.to_lowercase().contains(&query_lower)
+                    || pkg.description.to_lowercase().contains(&query_lower)
             })
             .collect()
     }
@@ -134,7 +137,7 @@ impl PackageDatabase {
                 } else {
                     InstallStatus::Installed
                 }
-            },
+            }
             (Some(_), None) => InstallStatus::Installed,
             (None, Some(_)) => InstallStatus::NotInstalled,
             (None, None) => InstallStatus::NotInstalled,
@@ -196,12 +199,12 @@ impl CorePackageManager {
     pub async fn new(config: Config) -> PackerResult<Self> {
         let mut database = PackageDatabase::new(config.cache_dir.clone());
         database.load().await?;
-        
+
         let mut native_db = NativePackageDatabase::new(config.cache_dir.clone());
         native_db.initialize().await?;
-        
+
         let transaction_log_path = config.cache_dir.join("transactions.json");
-        
+
         Ok(Self {
             config,
             database,
@@ -214,17 +217,16 @@ impl CorePackageManager {
 
     pub async fn search(&mut self, query: &str) -> PackerResult<Vec<CorePackage>> {
         info!("Searching for: {}", query);
-        
+
         if self.native_db.is_stale() {
             warn!("Database is stale, performing automatic update...");
-            println!("⚠️  Database is stale (>6 hours old). Run 'packer update' for latest packages.");
+            println!(
+                "⚠️  Database is stale (>6 hours old). Run 'packer update' for latest packages."
+            );
         }
-        
-        let mut results: Vec<CorePackage> = self.native_db
-            .search(query)
-            .into_iter()
-            .cloned()
-            .collect();
+
+        let mut results: Vec<CorePackage> =
+            self.native_db.search(query).into_iter().cloned().collect();
 
         info!("Found {} results in native database", results.len());
 
@@ -242,26 +244,29 @@ impl CorePackageManager {
                 });
                 return Ok(results.into_iter().take(20).collect());
             }
-            
+
             results.truncate(20);
             return Ok(results);
         }
 
         info!("No results in local database, searching AUR automatically...");
         println!("🔍 Package not in local database, searching AUR...");
-        
+
         match self.search_and_cache_from_aur(query).await {
             Ok(aur_results) => {
                 if !aur_results.is_empty() {
-                    println!("✅ Found {} packages in AUR and added to database", aur_results.len());
+                    println!(
+                        "✅ Found {} packages in AUR and added to database",
+                        aur_results.len()
+                    );
                     results.extend(aur_results);
                 }
-            },
+            }
             Err(e) => {
                 warn!("Failed to search AUR: {}", e);
             }
         }
-        
+
         if results.is_empty() {
             if let Ok(external_results) = self.search_external(query).await {
                 results.extend(external_results);
@@ -279,47 +284,51 @@ impl CorePackageManager {
         });
 
         results.truncate(20);
-        
+
         Ok(results)
     }
 
     async fn search_and_cache_from_aur(&mut self, query: &str) -> PackerResult<Vec<CorePackage>> {
-        let url = format!("https://aur.archlinux.org/rpc/?v=5&type=search&arg={}", query);
+        let url = format!(
+            "https://aur.archlinux.org/rpc/?v=5&type=search&arg={}",
+            query
+        );
         let client = reqwest::Client::new();
-        
+
         let response = client.get(&url).send().await?;
         if !response.status().is_success() {
             return Ok(Vec::new());
         }
-        
+
         let json: serde_json::Value = response.json().await?;
         let mut packages = Vec::new();
-        
+
         if let Some(results) = json["results"].as_array() {
             let mut parsed_packages: Vec<(CorePackage, f64)> = Vec::new();
-            
+
             for result in results {
                 if let Some(package) = self.parse_aur_search_result(result) {
                     let popularity = result["Popularity"].as_f64().unwrap_or(0.0);
                     parsed_packages.push((package, popularity));
                 }
             }
-            
-            parsed_packages.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            
+
+            parsed_packages
+                .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
             for (package, _) in parsed_packages.into_iter().take(10) {
                 self.native_db.add_package_no_save(package.clone());
                 info!("Added {} to AUR cache", package.name);
                 packages.push(package);
             }
-            
+
             if !packages.is_empty() {
                 if let Err(e) = self.native_db.save_to_disk().await {
                     warn!("Failed to save packages to disk: {}", e);
                 }
             }
         }
-        
+
         Ok(packages)
     }
 
@@ -327,7 +336,10 @@ impl CorePackageManager {
         let name = result["Name"].as_str()?.to_string();
         let version = result["Version"].as_str().unwrap_or("unknown").to_string();
         let description = result["Description"].as_str().unwrap_or("").to_string();
-        let maintainer = result["Maintainer"].as_str().unwrap_or("unknown").to_string();
+        let maintainer = result["Maintainer"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
         let url = result["URL"].as_str().unwrap_or("").to_string();
 
         Some(CorePackage {
@@ -362,17 +374,18 @@ impl CorePackageManager {
             status: TransactionStatus::InProgress,
         };
 
-        let installed_packages: std::collections::HashMap<String, CorePackage> = 
-            self.database.list_installed()
-                .into_iter()
-                .map(|p| (p.name.clone(), p.clone()))
-                .collect();
+        let installed_packages: std::collections::HashMap<String, CorePackage> = self
+            .database
+            .list_installed()
+            .into_iter()
+            .map(|p| (p.name.clone(), p.clone()))
+            .collect();
 
-        let resolution = match self.resolver.resolve_dependencies(
-            packages,
-            &self.native_db,
-            &installed_packages,
-        ).await {
+        let resolution = match self
+            .resolver
+            .resolve_dependencies(packages, &self.native_db, &installed_packages)
+            .await
+        {
             Ok(res) => res,
             Err(e) => {
                 transaction.status = TransactionStatus::Failed;
@@ -382,18 +395,21 @@ impl CorePackageManager {
             }
         };
 
-        info!("Resolved {} packages in {:?}", 
-              resolution.packages_to_install.len(), 
-              resolution.resolution_time);
+        info!(
+            "Resolved {} packages in {:?}",
+            resolution.packages_to_install.len(),
+            resolution.resolution_time
+        );
 
         if self.resolver.is_critical_conflict(&resolution.conflicts) {
             let conflict_msgs = self.resolver.format_conflicts(&resolution.conflicts);
             transaction.status = TransactionStatus::Failed;
             transaction.failed_packages = packages.iter().map(|s| s.clone()).collect();
             self.save_transaction(transaction).await?;
-            return Err(PackerError::DependencyConflict(
-                format!("Critical conflicts found:\n{}", conflict_msgs.join("\n"))
-            ));
+            return Err(PackerError::DependencyConflict(format!(
+                "Critical conflicts found:\n{}",
+                conflict_msgs.join("\n")
+            )));
         }
 
         transaction.packages_to_install = resolution.packages_to_install.clone();
@@ -416,29 +432,31 @@ impl CorePackageManager {
             }
         }
 
-        let install_result = self.install_with_recovery(
-            &mut transaction,
-            &official_packages,
-            &aur_packages,
-            &other_packages,
-        ).await;
+        let install_result = self
+            .install_with_recovery(
+                &mut transaction,
+                &official_packages,
+                &aur_packages,
+                &other_packages,
+            )
+            .await;
 
         match install_result {
             Ok(()) => {
                 transaction.status = TransactionStatus::Completed;
                 info!("Installation completed successfully");
-            },
+            }
             Err(e) => {
                 transaction.status = TransactionStatus::Failed;
                 warn!("Installation failed: {}", e);
-                
+
                 if let Err(rollback_err) = self.rollback_transaction(&mut transaction).await {
                     warn!("Rollback also failed: {}", rollback_err);
                 } else {
                     transaction.status = TransactionStatus::RolledBack;
                     info!("Successfully rolled back failed installation");
                 }
-                
+
                 self.save_transaction(transaction).await?;
                 return Err(e);
             }
@@ -456,7 +474,8 @@ impl CorePackageManager {
         aur_packages: &[CorePackage],
         other_packages: &[CorePackage],
     ) -> PackerResult<()> {
-        let all_packages: Vec<_> = official_packages.iter()
+        let all_packages: Vec<_> = official_packages
+            .iter()
             .chain(aur_packages.iter())
             .chain(other_packages.iter())
             .collect();
@@ -464,9 +483,12 @@ impl CorePackageManager {
         if all_packages.is_empty() {
             println!("✅ All requested packages are already installed!");
         } else {
-            println!("🔧 Installing {} packages natively (no pacman)...", all_packages.len());
+            println!(
+                "🔧 Installing {} packages natively (no pacman)...",
+                all_packages.len()
+            );
         }
-        
+
         let mut installed_count = 0;
         let mut failed_packages = Vec::new();
 
@@ -477,7 +499,7 @@ impl CorePackageManager {
                     installed_count += 1;
                     transaction.installed_packages.push((*package).clone());
                     self.database.mark_installed((*package).clone());
-                },
+                }
                 Err(e) => {
                     println!("❌ Failed to install {}: {}", package.name, e);
                     failed_packages.push(package.name.clone());
@@ -487,18 +509,19 @@ impl CorePackageManager {
         }
 
         if !failed_packages.is_empty() {
-            return Err(PackerError::InstallationFailed(
-                format!("Failed to install {} packages: {}", 
-                    failed_packages.len(), 
-                    failed_packages.join(", "))
-            ));
+            return Err(PackerError::InstallationFailed(format!(
+                "Failed to install {} packages: {}",
+                failed_packages.len(),
+                failed_packages.join(", ")
+            )));
         }
 
         if installed_count > 0 {
-            println!("🎉 Successfully installed {} packages natively!", installed_count);
+            println!(
+                "🎉 Successfully installed {} packages natively!",
+                installed_count
+            );
         }
-
-
 
         Ok(())
     }
@@ -513,7 +536,10 @@ impl CorePackageManager {
             transaction.rollback_commands.push(RollbackCommand {
                 action: RollbackAction::RemovePackage,
                 package_name: package.name.clone(),
-                details: format!("Remove {} {} if installation fails", package.name, package.version),
+                details: format!(
+                    "Remove {} {} if installation fails",
+                    package.name, package.version
+                ),
             });
         }
 
@@ -540,23 +566,33 @@ impl CorePackageManager {
         self.try_native_install(package, transaction).await
     }
 
-    async fn rollback_transaction(&mut self, transaction: &mut InstallTransaction) -> PackerResult<()> {
+    async fn rollback_transaction(
+        &mut self,
+        transaction: &mut InstallTransaction,
+    ) -> PackerResult<()> {
         info!("Starting transaction rollback for: {}", transaction.id);
-        
+
         let mut rollback_errors = Vec::new();
-        
+
         for command in transaction.rollback_commands.iter().rev() {
             match &command.action {
                 RollbackAction::RemovePackage => {
-                    if let Err(e) = self.remove_package_for_rollback(&command.package_name).await {
-                        rollback_errors.push(format!("Failed to remove {}: {}", command.package_name, e));
+                    if let Err(e) = self
+                        .remove_package_for_rollback(&command.package_name)
+                        .await
+                    {
+                        rollback_errors
+                            .push(format!("Failed to remove {}: {}", command.package_name, e));
                     } else {
                         info!("Rolled back: removed {}", command.package_name);
                     }
-                },
+                }
                 RollbackAction::RestorePackage { version } => {
-                    info!("Would restore {} to version {}", command.package_name, version);
-                },
+                    info!(
+                        "Would restore {} to version {}",
+                        command.package_name, version
+                    );
+                }
                 RollbackAction::CleanupFiles { paths } => {
                     for path in paths {
                         if let Err(e) = tokio::fs::remove_file(path).await {
@@ -568,7 +604,10 @@ impl CorePackageManager {
         }
 
         if !rollback_errors.is_empty() {
-            warn!("Rollback completed with errors: {}", rollback_errors.join(", "));
+            warn!(
+                "Rollback completed with errors: {}",
+                rollback_errors.join(", ")
+            );
         } else {
             info!("Rollback completed successfully");
         }
@@ -579,31 +618,32 @@ impl CorePackageManager {
     async fn remove_package_for_rollback(&mut self, package_name: &str) -> PackerResult<()> {
         use crate::native_format::NativePackageManager;
         let mut native_manager = NativePackageManager::new(self.config.install_root.clone())?;
-        
+
         match native_manager.remove_package(package_name).await {
             Ok(()) => {
                 self.database.mark_removed(package_name);
                 Ok(())
-            },
+            }
             Err(e) => {
-                    warn!("Native removal failed for {}: {}", package_name, e);
-                    Err(PackerError::InstallationFailed(
-                    format!("Failed to remove {} during rollback", package_name)
-                ))
+                warn!("Native removal failed for {}: {}", package_name, e);
+                Err(PackerError::InstallationFailed(format!(
+                    "Failed to remove {} during rollback",
+                    package_name
+                )))
             }
         }
     }
 
     async fn save_transaction(&mut self, transaction: InstallTransaction) -> PackerResult<()> {
         self.transactions.push(transaction);
-        
+
         if self.transactions.len() > 100 {
             self.transactions.drain(0..50);
         }
-        
+
         let content = serde_json::to_string_pretty(&self.transactions)?;
         tokio::fs::write(&self.transaction_log_path, content).await?;
-        
+
         Ok(())
     }
 
@@ -612,24 +652,30 @@ impl CorePackageManager {
     }
 
     pub async fn rollback_by_id(&mut self, transaction_id: &str) -> PackerResult<()> {
-        if let Some(mut transaction) = self.transactions.iter()
+        if let Some(mut transaction) = self
+            .transactions
+            .iter()
             .find(|t| t.id == transaction_id)
-            .cloned() {
-            
+            .cloned()
+        {
             self.rollback_transaction(&mut transaction).await?;
             transaction.status = TransactionStatus::RolledBack;
-            
-            if let Some(stored_tx) = self.transactions.iter_mut()
-                .find(|t| t.id == transaction_id) {
+
+            if let Some(stored_tx) = self
+                .transactions
+                .iter_mut()
+                .find(|t| t.id == transaction_id)
+            {
                 *stored_tx = transaction;
             }
-            
+
             self.save_transaction_log().await?;
             Ok(())
         } else {
-            Err(PackerError::InstallationFailed(
-                format!("Transaction {} not found", transaction_id)
-            ))
+            Err(PackerError::InstallationFailed(format!(
+                "Transaction {} not found",
+                transaction_id
+            )))
         }
     }
 
@@ -639,27 +685,44 @@ impl CorePackageManager {
         Ok(())
     }
 
-    async fn try_native_install(&mut self, package: &CorePackage, transaction: &mut InstallTransaction) -> PackerResult<()> {
+    async fn try_native_install(
+        &mut self,
+        package: &CorePackage,
+        transaction: &mut InstallTransaction,
+    ) -> PackerResult<()> {
         use crate::native_format::NativePackageManager;
-        
+
         info!("Attempting native installation for: {}", package.name);
-        
-        let temp_dir = self.config.cache_dir.join("native-conversion").join(&package.name);
+
+        let temp_dir = self
+            .config
+            .cache_dir
+            .join("native-conversion")
+            .join(&package.name);
         if temp_dir.exists() {
             tokio::fs::remove_dir_all(&temp_dir).await?;
         }
         tokio::fs::create_dir_all(&temp_dir).await?;
-        
-        let package_files = match self.download_package_for_conversion(package, &temp_dir).await {
+
+        let package_files = match self
+            .download_package_for_conversion(package, &temp_dir)
+            .await
+        {
             Ok(files) => files,
             Err(e) => {
                 tokio::fs::remove_dir_all(&temp_dir).await.ok();
-                info!("Failed to download {} for native conversion: {}", package.name, e);
+                info!(
+                    "Failed to download {} for native conversion: {}",
+                    package.name, e
+                );
                 return Err(e);
             }
         };
-        
-        let native_package = match self.convert_to_native_package(package, &package_files, &temp_dir).await {
+
+        let native_package = match self
+            .convert_to_native_package(package, &package_files, &temp_dir)
+            .await
+        {
             Ok(pkg) => pkg,
             Err(e) => {
                 tokio::fs::remove_dir_all(&temp_dir).await.ok();
@@ -667,22 +730,28 @@ impl CorePackageManager {
                 return Err(e);
             }
         };
-        
+
         let mut native_manager = NativePackageManager::new(self.config.install_root.clone())?;
-        
+
         match native_manager.install_package(&native_package).await {
             Ok(()) => {
                 transaction.rollback_commands.push(RollbackCommand {
                     action: RollbackAction::RemovePackage,
                     package_name: package.name.clone(),
-                    details: format!("Remove native package {} if transaction fails", package.name),
+                    details: format!(
+                        "Remove native package {} if transaction fails",
+                        package.name
+                    ),
                 });
-                
+
                 tokio::fs::remove_dir_all(&temp_dir).await.ok();
-                
-                info!("Successfully installed {} using native format", package.name);
+
+                info!(
+                    "Successfully installed {} using native format",
+                    package.name
+                );
                 Ok(())
-            },
+            }
             Err(e) => {
                 tokio::fs::remove_dir_all(&temp_dir).await.ok();
                 info!("Native installation failed for {}: {}", package.name, e);
@@ -690,24 +759,30 @@ impl CorePackageManager {
             }
         }
     }
-    
-    async fn download_package_for_conversion(&self, package: &CorePackage, temp_dir: &std::path::Path) -> PackerResult<Vec<std::path::PathBuf>> {
+
+    async fn download_package_for_conversion(
+        &self,
+        package: &CorePackage,
+        temp_dir: &std::path::Path,
+    ) -> PackerResult<Vec<std::path::PathBuf>> {
         match package.source_type {
-            SourceType::Official => {
-                self.download_official_package(package, temp_dir).await
-            },
+            SourceType::Official => self.download_official_package(package, temp_dir).await,
             SourceType::AUR => {
-                self.build_aur_package_for_conversion(package, temp_dir).await
-            },
-            _ => {
-                Err(PackerError::InstallationFailed(
-                    format!("Native conversion not supported for source type: {:?}", package.source_type)
-                ))
+                self.build_aur_package_for_conversion(package, temp_dir)
+                    .await
             }
+            _ => Err(PackerError::InstallationFailed(format!(
+                "Native conversion not supported for source type: {:?}",
+                package.source_type
+            ))),
         }
     }
-    
-    async fn download_official_package(&self, package: &CorePackage, temp_dir: &std::path::Path) -> PackerResult<Vec<std::path::PathBuf>> {
+
+    async fn download_official_package(
+        &self,
+        package: &CorePackage,
+        temp_dir: &std::path::Path,
+    ) -> PackerResult<Vec<std::path::PathBuf>> {
         let repo_name = &package.repository;
         let mirrors = match repo_name.as_str() {
             "core" => vec![
@@ -722,7 +797,10 @@ impl CorePackageManager {
                 "https://geo.mirror.pkgbuild.com/community/os/x86_64".to_string(),
                 "https://mirror.rackspace.com/archlinux/community/os/x86_64".to_string(),
             ],
-            _ => vec![format!("https://geo.mirror.pkgbuild.com/{}/os/x86_64", repo_name)],
+            _ => vec![format!(
+                "https://geo.mirror.pkgbuild.com/{}/os/x86_64",
+                repo_name
+            )],
         };
 
         let client = reqwest::Client::builder()
@@ -730,39 +808,43 @@ impl CorePackageManager {
             .build()?;
 
         let version = &package.version;
-        
+
         let architectures = if package.arch == "any" {
             vec!["any"]
         } else {
             vec![&package.arch, "any"]
         };
-        
+
         let extensions = vec!["pkg.tar.zst", "pkg.tar.xz"];
-        
+
         let mut download_path = None;
-        
+
         for mirror_url in &mirrors {
             for arch in &architectures {
                 for ext in &extensions {
                     let package_filename = format!("{}-{}-{}.{}", package.name, version, arch, ext);
                     let download_url = format!("{}/{}", mirror_url, package_filename);
-                    
+
                     info!("Trying to download from: {}", download_url);
-                    
+
                     match client.head(&download_url).send().await {
                         Ok(response) if response.status().is_success() => {
                             let package_file = temp_dir.join(&package_filename);
-                            
+
                             let download_response = client.get(&download_url).send().await?;
                             if download_response.status().is_success() {
                                 let bytes = download_response.bytes().await?;
                                 tokio::fs::write(&package_file, &bytes).await?;
-                                
-                                info!("Successfully downloaded {} ({} bytes)", package.name, bytes.len());
+
+                                info!(
+                                    "Successfully downloaded {} ({} bytes)",
+                                    package.name,
+                                    bytes.len()
+                                );
                                 download_path = Some(package_file);
                                 break;
                             }
-                        },
+                        }
                         _ => continue,
                     }
                 }
@@ -774,15 +856,19 @@ impl CorePackageManager {
                 break;
             }
         }
-        
+
         let package_file = download_path.ok_or_else(|| {
-            PackerError::DownloadFailed(format!("Could not download package {} from any mirror", package.name))
+            PackerError::DownloadFailed(format!(
+                "Could not download package {} from any mirror",
+                package.name
+            ))
         })?;
-        
+
         let extract_dir = temp_dir.join("extracted");
         tokio::fs::create_dir_all(&extract_dir).await?;
-        
-        let extraction_result = if package_file.extension().and_then(|s| s.to_str()) == Some("zst") {
+
+        let extraction_result = if package_file.extension().and_then(|s| s.to_str()) == Some("zst")
+        {
             tokio::process::Command::new("tar")
                 .arg("--use-compress-program=unzstd")
                 .arg("-xf")
@@ -800,48 +886,56 @@ impl CorePackageManager {
                 .output()
                 .await?
         };
-        
+
         if extraction_result.status.success() {
             tokio::fs::remove_file(&package_file).await.ok();
             Ok(vec![extract_dir])
         } else {
-            Err(PackerError::DownloadFailed(
-                format!("Failed to extract package {}: {}", package.name, String::from_utf8_lossy(&extraction_result.stderr))
-            ))
+            Err(PackerError::DownloadFailed(format!(
+                "Failed to extract package {}: {}",
+                package.name,
+                String::from_utf8_lossy(&extraction_result.stderr)
+            )))
         }
     }
-    
-    async fn build_aur_package_for_conversion(&self, package: &CorePackage, temp_dir: &std::path::Path) -> PackerResult<Vec<std::path::PathBuf>> {
+
+    async fn build_aur_package_for_conversion(
+        &self,
+        package: &CorePackage,
+        temp_dir: &std::path::Path,
+    ) -> PackerResult<Vec<std::path::PathBuf>> {
         let build_dir = temp_dir.join("build");
         tokio::fs::create_dir_all(&build_dir).await?;
-        
+
         let clone_output = tokio::process::Command::new("git")
             .arg("clone")
             .arg(format!("https://aur.archlinux.org/{}.git", package.name))
             .arg(&build_dir)
             .output()
             .await?;
-            
+
         if !clone_output.status.success() {
-            return Err(PackerError::BuildFailed(
-                format!("Failed to clone AUR repo for {}", package.name)
-            ));
+            return Err(PackerError::BuildFailed(format!(
+                "Failed to clone AUR repo for {}",
+                package.name
+            )));
         }
-        
+
         let build_output = tokio::process::Command::new("makepkg")
             .arg("-f")
             .arg("--noconfirm")
             .current_dir(&build_dir)
             .output()
             .await?;
-            
+
         if !build_output.status.success() {
-            return Err(PackerError::BuildFailed(
-                format!("Failed to build AUR package {}: {}", 
-                    package.name, String::from_utf8_lossy(&build_output.stderr))
-            ));
+            return Err(PackerError::BuildFailed(format!(
+                "Failed to build AUR package {}: {}",
+                package.name,
+                String::from_utf8_lossy(&build_output.stderr)
+            )));
         }
-        
+
         let mut package_files = Vec::new();
         let mut entries = tokio::fs::read_dir(&build_dir).await?;
         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -850,7 +944,7 @@ impl CorePackageManager {
                 if extension == "pkg" || extension == "xz" {
                     let extract_dir = temp_dir.join("extracted");
                     tokio::fs::create_dir_all(&extract_dir).await?;
-                    
+
                     let extract_output = tokio::process::Command::new("tar")
                         .arg("-xf")
                         .arg(&path)
@@ -858,26 +952,32 @@ impl CorePackageManager {
                         .arg(&extract_dir)
                         .output()
                         .await?;
-                        
+
                     if extract_output.status.success() {
                         package_files.push(extract_dir);
                     }
                 }
             }
         }
-        
+
         if package_files.is_empty() {
-            Err(PackerError::BuildFailed(
-                format!("No package files found after building {}", package.name)
-            ))
+            Err(PackerError::BuildFailed(format!(
+                "No package files found after building {}",
+                package.name
+            )))
         } else {
             Ok(package_files)
         }
     }
-    
-    async fn convert_to_native_package(&self, package: &CorePackage, package_files: &[std::path::PathBuf], _temp_dir: &std::path::Path) -> PackerResult<crate::native_format::NativePackage> {
+
+    async fn convert_to_native_package(
+        &self,
+        package: &CorePackage,
+        package_files: &[std::path::PathBuf],
+        _temp_dir: &std::path::Path,
+    ) -> PackerResult<crate::native_format::NativePackage> {
         use crate::native_format::{NativePackage, PackageMetadata, PackageScripts};
-        
+
         let metadata = PackageMetadata {
             name: package.name.clone(),
             version: package.version.clone(),
@@ -890,21 +990,24 @@ impl CorePackageManager {
             installed_size: package.installed_size,
             checksum: package.checksum.clone().unwrap_or_default(),
         };
-        
+
         let mut files = Vec::new();
-        
+
         for package_dir in package_files {
-            self.scan_directory_recursive(package_dir, package_dir, &mut files).await?;
+            self.scan_directory_recursive(package_dir, package_dir, &mut files)
+                .await?;
         }
-        
-        let dependencies = package.dependencies.iter().map(|dep| {
-            crate::native_format::NativeDependency {
+
+        let dependencies = package
+            .dependencies
+            .iter()
+            .map(|dep| crate::native_format::NativeDependency {
                 name: dep.clone(),
                 version_constraint: None,
                 optional: false,
-            }
-        }).collect();
-        
+            })
+            .collect();
+
         Ok(NativePackage {
             metadata,
             files,
@@ -921,33 +1024,35 @@ impl CorePackageManager {
     }
 
     async fn scan_directory_recursive(
-        &self, 
-        current_dir: &std::path::Path, 
-        base_dir: &std::path::Path, 
-        files: &mut Vec<crate::native_format::PackageFile>
+        &self,
+        current_dir: &std::path::Path,
+        base_dir: &std::path::Path,
+        files: &mut Vec<crate::native_format::PackageFile>,
     ) -> PackerResult<()> {
-        use crate::native_format::{PackageFile, FileType};
-        
+        use crate::native_format::{FileType, PackageFile};
+
         let mut entries = tokio::fs::read_dir(current_dir).await?;
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            let relative_path = path.strip_prefix(base_dir)
+            let relative_path = path
+                .strip_prefix(base_dir)
                 .map_err(|e| PackerError::RepositoryError(e.to_string()))?;
-            
+
             let metadata = entry.metadata().await?;
-            
+
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if file_name.starts_with('.') && 
-               (file_name == ".BUILDINFO" || file_name == ".PKGINFO" || file_name == ".MTREE") {
+            if file_name.starts_with('.')
+                && (file_name == ".BUILDINFO" || file_name == ".PKGINFO" || file_name == ".MTREE")
+            {
                 continue;
             }
-            
+
             let target_path = if relative_path.starts_with("/") {
                 relative_path.to_string_lossy().to_string()
             } else {
                 format!("/{}", relative_path.to_string_lossy())
             };
-            
+
             if metadata.is_dir() {
                 let file = PackageFile {
                     source: path.to_string_lossy().to_string(),
@@ -959,7 +1064,7 @@ impl CorePackageManager {
                     checksum: "".to_string(),
                 };
                 files.push(file);
-                
+
                 Box::pin(self.scan_directory_recursive(&path, base_dir, files)).await?;
             } else if metadata.file_type().is_symlink() {
                 let link_target = match tokio::fs::read_link(&path).await {
@@ -980,7 +1085,12 @@ impl CorePackageManager {
                 let file = PackageFile {
                     source: path.to_string_lossy().to_string(),
                     target: target_path.clone(),
-                    permissions: if target_path.contains("/bin/") || target_path.contains("/sbin/") { 0o755 } else { 0o644 },
+                    permissions: if target_path.contains("/bin/") || target_path.contains("/sbin/")
+                    {
+                        0o755
+                    } else {
+                        0o644
+                    },
                     owner: std::env::var("USER").unwrap_or_else(|_| "user".to_string()),
                     group: std::env::var("USER").unwrap_or_else(|_| "user".to_string()),
                     file_type: FileType::Regular,
@@ -989,31 +1099,37 @@ impl CorePackageManager {
                 files.push(file);
             }
         }
-        
+
         Ok(())
     }
 
     #[allow(dead_code)]
     async fn install_official_packages(&mut self, _packages: &[CorePackage]) -> PackerResult<()> {
-        Err(PackerError::ConfigError("Deprecated: Use native installation instead".to_string()))
+        Err(PackerError::ConfigError(
+            "Deprecated: Use native installation instead".to_string(),
+        ))
     }
 
     #[allow(dead_code)]
     async fn install_single_aur_package(&self, _package: &CorePackage) -> PackerResult<()> {
-        Err(PackerError::ConfigError("Deprecated: Use native installation instead".to_string()))
+        Err(PackerError::ConfigError(
+            "Deprecated: Use native installation instead".to_string(),
+        ))
     }
 
     #[allow(dead_code)]
     async fn install_other_packages(&mut self, _packages: &[CorePackage]) -> PackerResult<()> {
-        Err(PackerError::ConfigError("Deprecated: Use native installation instead".to_string()))
+        Err(PackerError::ConfigError(
+            "Deprecated: Use native installation instead".to_string(),
+        ))
     }
 
     pub async fn remove(&mut self, packages: &[String]) -> PackerResult<()> {
         info!("Removing packages: {:?}", packages);
-        
+
         let mut official_packages = Vec::new();
         let mut other_packages = Vec::new();
-        
+
         for package_name in packages {
             if let Some(package) = self.database.get_installed(package_name) {
                 match package.source_type {
@@ -1022,24 +1138,24 @@ impl CorePackageManager {
                 }
             }
         }
-        
+
         if !official_packages.is_empty() {
             self.remove_official_packages(&official_packages).await?;
         }
-        
+
         for package_name in &other_packages {
             self.remove_other_package(package_name).await?;
         }
-        
+
         self.database.save().await?;
         Ok(())
     }
 
     async fn remove_official_packages(&mut self, packages: &[String]) -> PackerResult<()> {
         info!("Removing {} packages natively", packages.len());
-        
+
         let mut failed_packages = Vec::new();
-        
+
         for package_name in packages {
             if let Some(package) = self.database.get_installed(package_name) {
                 match self.convert_core_to_native_package(package).await {
@@ -1048,15 +1164,18 @@ impl CorePackageManager {
                             Ok(()) => {
                                 self.database.mark_removed(package_name);
                                 println!("✅ Removed: {}", package_name);
-                            },
+                            }
                             Err(e) => {
                                 warn!("Failed to remove {}: {}", package_name, e);
                                 failed_packages.push(package_name.clone());
                             }
                         }
-                    },
+                    }
                     Err(e) => {
-                        warn!("Failed to convert package {} for removal: {}", package_name, e);
+                        warn!(
+                            "Failed to convert package {} for removal: {}",
+                            package_name, e
+                        );
                         failed_packages.push(package_name.clone());
                     }
                 }
@@ -1065,15 +1184,15 @@ impl CorePackageManager {
                 failed_packages.push(package_name.clone());
             }
         }
-        
+
         if !failed_packages.is_empty() {
-            return Err(PackerError::RemovalFailed(
-                format!("Failed to remove {} packages: {}", 
-                    failed_packages.len(), 
-                    failed_packages.join(", "))
-            ));
+            return Err(PackerError::RemovalFailed(format!(
+                "Failed to remove {} packages: {}",
+                failed_packages.len(),
+                failed_packages.join(", ")
+            )));
         }
-        
+
         info!("Successfully removed all packages natively");
         Ok(())
     }
@@ -1090,7 +1209,7 @@ impl CorePackageManager {
 
     pub fn get_package_status(&self, name: &str) -> InstallStatus {
         let db_status = self.database.get_status(name);
-        
+
         if let InstallStatus::NotInstalled = db_status {
             if let Some(available_pkg) = self.native_db.get_package(name) {
                 if let Some(installed_pkg) = self.database.get_installed(name) {
@@ -1101,7 +1220,7 @@ impl CorePackageManager {
                 return InstallStatus::NotInstalled;
             }
         }
-        
+
         db_status
     }
 
@@ -1138,56 +1257,62 @@ impl CorePackageManager {
     async fn search_external(&self, query: &str) -> PackerResult<Vec<CorePackage>> {
         let mut results = Vec::new();
         let mut errors = Vec::new();
-        
+
         let native_results = self.search_native_database(query).await;
-        info!("Found {} results from native database", native_results.len());
+        info!(
+            "Found {} results from native database",
+            native_results.len()
+        );
         results.extend(native_results);
-        
+
         if results.len() < 5 {
             match self.search_aur(query).await {
                 Ok(aur_results) => {
                     info!("Found {} results from AUR", aur_results.len());
                     results.extend(aur_results);
-                },
+                }
                 Err(e) => {
                     warn!("AUR search failed: {}", e);
                     errors.push(format!("AUR: {}", e));
                 }
             }
         }
-        
+
         if results.is_empty() && !errors.is_empty() {
             match self.fallback_package_lookup(query).await {
                 Ok(fallback_results) => {
-                    info!("Found {} results from fallback lookup", fallback_results.len());
+                    info!(
+                        "Found {} results from fallback lookup",
+                        fallback_results.len()
+                    );
                     results.extend(fallback_results);
-                },
+                }
                 Err(e) => {
                     warn!("Fallback lookup failed: {}", e);
                     errors.push(format!("Fallback: {}", e));
                 }
             }
         }
-        
+
         if results.is_empty() && !errors.is_empty() {
             warn!("All repository sources failed: {}", errors.join(", "));
         }
-        
+
         Ok(results)
     }
 
     async fn fallback_package_lookup(&self, query: &str) -> PackerResult<Vec<CorePackage>> {
         let url = format!("https://aur.archlinux.org/rpc/?v=5&type=info&arg={}", query);
         let client = reqwest::Client::new();
-        
+
         let response = client.get(&url).send().await?;
         if !response.status().is_success() {
             return Ok(Vec::new());
         }
-        
+
         let json: serde_json::Value = response.json().await?;
         let mut packages = Vec::new();
-        
+
         if let Some(results) = json["results"].as_array() {
             for result in results {
                 if let Some(package) = self.parse_aur_search_result(result) {
@@ -1195,46 +1320,56 @@ impl CorePackageManager {
                 }
             }
         }
-        
+
         Ok(packages)
     }
 
     async fn search_native_database(&self, query: &str) -> Vec<CorePackage> {
         let matches = self.native_db.search_packages(query);
-        
-        matches.into_iter().map(|pkg| {
-            let is_aur = pkg.repository == "aur";
-            CorePackage {
-                name: pkg.name,
-                version: pkg.version,
-                description: pkg.description,
-                repository: pkg.repository,
-                arch: pkg.arch,
-                download_size: pkg.download_size,
-                installed_size: pkg.installed_size,
-                dependencies: pkg.dependencies,
-                conflicts: pkg.conflicts,
-                maintainer: pkg.maintainer,
-                url: pkg.url,
-                checksum: pkg.checksum,
-                source_type: if is_aur { SourceType::AUR } else { SourceType::Official },
-                install_date: pkg.install_date,
-            }
-        }).collect()
+
+        matches
+            .into_iter()
+            .map(|pkg| {
+                let is_aur = pkg.repository == "aur";
+                CorePackage {
+                    name: pkg.name,
+                    version: pkg.version,
+                    description: pkg.description,
+                    repository: pkg.repository,
+                    arch: pkg.arch,
+                    download_size: pkg.download_size,
+                    installed_size: pkg.installed_size,
+                    dependencies: pkg.dependencies,
+                    conflicts: pkg.conflicts,
+                    maintainer: pkg.maintainer,
+                    url: pkg.url,
+                    checksum: pkg.checksum,
+                    source_type: if is_aur {
+                        SourceType::AUR
+                    } else {
+                        SourceType::Official
+                    },
+                    install_date: pkg.install_date,
+                }
+            })
+            .collect()
     }
 
     async fn search_aur(&self, query: &str) -> PackerResult<Vec<CorePackage>> {
-        let url = format!("https://aur.archlinux.org/rpc/?v=5&type=search&arg={}", query);
+        let url = format!(
+            "https://aur.archlinux.org/rpc/?v=5&type=search&arg={}",
+            query
+        );
         let client = reqwest::Client::new();
-        
+
         let response = client.get(&url).send().await?;
         if !response.status().is_success() {
             return Ok(Vec::new());
         }
-        
+
         let json: serde_json::Value = response.json().await?;
         let mut packages = Vec::new();
-        
+
         if let Some(results) = json["results"].as_array() {
             for result in results {
                 if let Some(name) = result["Name"].as_str() {
@@ -1248,7 +1383,10 @@ impl CorePackageManager {
                         installed_size: 0,
                         dependencies: Vec::new(),
                         conflicts: Vec::new(),
-                        maintainer: result["Maintainer"].as_str().unwrap_or("unknown").to_string(),
+                        maintainer: result["Maintainer"]
+                            .as_str()
+                            .unwrap_or("unknown")
+                            .to_string(),
                         url: result["URL"].as_str().unwrap_or("").to_string(),
                         checksum: None,
                         source_type: SourceType::AUR,
@@ -1258,14 +1396,14 @@ impl CorePackageManager {
                 }
             }
         }
-        
+
         Ok(packages)
     }
 
     #[allow(dead_code)]
     async fn find_external_package(&self, name: &str) -> PackerResult<CorePackage> {
         let search_results = self.search_external(name).await?;
-        
+
         search_results
             .into_iter()
             .find(|pkg| pkg.name == name)
@@ -1275,41 +1413,45 @@ impl CorePackageManager {
     // generate smart search names for packages by analyzing name patterns
     fn get_package_search_names(&self, package_name: &str) -> Vec<String> {
         let mut names = vec![package_name.to_string()];
-        
+
         // add common name variations automatically
         if package_name.contains("-") {
             names.push(package_name.replace("-", ""));
             names.push(package_name.replace("-", "_"));
         }
-        
+
         if package_name.contains("_") {
             names.push(package_name.replace("_", "-"));
             names.push(package_name.replace("_", ""));
         }
-        
+
         // add base name without suffixes
         if let Some(first_part) = package_name.split('-').next() {
             if first_part != package_name && first_part.len() >= 3 {
                 names.push(first_part.to_string());
             }
         }
-        
+
         // add common suffixes/prefixes that packages might use
         names.push(format!("{}-bin", package_name));
         names.push(format!("{}-git", package_name));
         names.push(format!("lib{}", package_name));
-        
+
         names.dedup();
         names
     }
 
     // dynamically scan for package files instead of hardcoded lists
-    async fn add_known_package_files(&self, package_name: &str, install_root: &std::path::Path, files: &mut Vec<crate::native_format::PackageFile>) -> PackerResult<()> {
-        
+    async fn add_known_package_files(
+        &self,
+        package_name: &str,
+        install_root: &std::path::Path,
+        files: &mut Vec<crate::native_format::PackageFile>,
+    ) -> PackerResult<()> {
         // scan common directories where packages typically install files - standard unix layout
         let common_dirs = vec![
             "bin",
-            "sbin", 
+            "sbin",
             "lib",
             "share",
             "etc",
@@ -1319,37 +1461,44 @@ impl CorePackageManager {
             "usr/share",
             "opt",
         ];
-        
+
         for dir in common_dirs {
             let search_path = install_root.join(dir);
             if search_path.exists() {
                 // scan for files related to this package
-                self.scan_directory_for_package(package_name, &search_path, install_root, files).await?;
+                self.scan_directory_for_package(package_name, &search_path, install_root, files)
+                    .await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     // scan directory for files that might belong to this package
-    fn scan_directory_for_package<'a>(&'a self, package_name: &'a str, search_dir: &'a std::path::Path, install_root: &'a std::path::Path, files: &'a mut Vec<crate::native_format::PackageFile>) -> std::pin::Pin<Box<dyn std::future::Future<Output = PackerResult<()>> + 'a>> {
+    fn scan_directory_for_package<'a>(
+        &'a self,
+        package_name: &'a str,
+        search_dir: &'a std::path::Path,
+        install_root: &'a std::path::Path,
+        files: &'a mut Vec<crate::native_format::PackageFile>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = PackerResult<()>> + 'a>> {
         Box::pin(async move {
-            use crate::native_format::{PackageFile, FileType};
-            
+            use crate::native_format::{FileType, PackageFile};
+
             let mut entries = tokio::fs::read_dir(search_dir).await?;
-            
+
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
                 let filename = entry.file_name().to_string_lossy().to_lowercase();
-                
+
                 // check if this file is related to our package - simple name matching
-                if filename.contains(&package_name.to_lowercase()) ||
-                   filename.starts_with(&package_name.to_lowercase()) ||
-                   filename.ends_with(&package_name.to_lowercase()) {
-                       
+                if filename.contains(&package_name.to_lowercase())
+                    || filename.starts_with(&package_name.to_lowercase())
+                    || filename.ends_with(&package_name.to_lowercase())
+                {
                     let metadata = entry.metadata().await?;
                     let relative_path = path.strip_prefix(install_root).unwrap_or(&path);
-                    
+
                     let file = PackageFile {
                         source: path.to_string_lossy().to_string(),
                         target: format!("/{}", relative_path.to_string_lossy()),
@@ -1359,9 +1508,11 @@ impl CorePackageManager {
                         file_type: if metadata.is_dir() {
                             FileType::Directory
                         } else if metadata.file_type().is_symlink() {
-                            let link_target = tokio::fs::read_link(&path).await
+                            let link_target = tokio::fs::read_link(&path)
+                                .await
                                 .unwrap_or_else(|_| std::path::PathBuf::from(""))
-                                .to_string_lossy().to_string();
+                                .to_string_lossy()
+                                .to_string();
                             FileType::Symlink(link_target)
                         } else {
                             FileType::Regular
@@ -1369,60 +1520,76 @@ impl CorePackageManager {
                         checksum: "".to_string(),
                     };
                     files.push(file);
-                    
+
                     // if it's a directory, recursively scan it - gotta check everything
                     if metadata.is_dir() {
-                        self.scan_directory_for_package(package_name, &path, install_root, files).await?;
+                        self.scan_directory_for_package(package_name, &path, install_root, files)
+                            .await?;
                     }
                 }
             }
-            
+
             Ok(())
         })
     }
-    
-    async fn scan_wildcard_pattern(&self, base_dir: &std::path::Path, pattern: &str, files: &mut Vec<crate::native_format::PackageFile>) -> PackerResult<()> {
-        
-        
+
+    async fn scan_wildcard_pattern(
+        &self,
+        base_dir: &std::path::Path,
+        pattern: &str,
+        files: &mut Vec<crate::native_format::PackageFile>,
+    ) -> PackerResult<()> {
         if pattern.contains('*') {
             let parts: Vec<&str> = pattern.split('*').collect();
             if parts.len() == 2 {
                 let prefix = parts[0];
                 let suffix = parts[1];
-                
-                let search_dir = base_dir.join(prefix).parent().unwrap_or(base_dir).to_path_buf();
+
+                let search_dir = base_dir
+                    .join(prefix)
+                    .parent()
+                    .unwrap_or(base_dir)
+                    .to_path_buf();
                 if search_dir.exists() {
-                    self.scan_directory_with_pattern(&search_dir, base_dir, prefix, suffix, files).await?;
+                    self.scan_directory_with_pattern(&search_dir, base_dir, prefix, suffix, files)
+                        .await?;
                 }
             }
         }
-        
+
         Ok(())
     }
-    
-    async fn scan_directory_with_pattern(&self, search_dir: &std::path::Path, base_dir: &std::path::Path, prefix: &str, suffix: &str, files: &mut Vec<crate::native_format::PackageFile>) -> PackerResult<()> {
-        use crate::native_format::{PackageFile, FileType};
-        
+
+    async fn scan_directory_with_pattern(
+        &self,
+        search_dir: &std::path::Path,
+        base_dir: &std::path::Path,
+        prefix: &str,
+        suffix: &str,
+        files: &mut Vec<crate::native_format::PackageFile>,
+    ) -> PackerResult<()> {
+        use crate::native_format::{FileType, PackageFile};
+
         let mut entries = match tokio::fs::read_dir(search_dir).await {
             Ok(entries) => entries,
             Err(_) => return Ok(()),
         };
-        
+
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
             let path_str = path.to_string_lossy();
-            
+
             if path_str.contains(prefix.trim_end_matches('/')) && path_str.ends_with(suffix) {
                 let metadata = match entry.metadata().await {
                     Ok(metadata) => metadata,
                     Err(_) => continue,
                 };
-                
+
                 let relative_path = match path.strip_prefix(base_dir) {
                     Ok(rel) => rel,
                     Err(_) => continue,
                 };
-                
+
                 let file = PackageFile {
                     source: path.to_string_lossy().to_string(),
                     target: format!("/{}", relative_path.to_string_lossy()),
@@ -1432,9 +1599,11 @@ impl CorePackageManager {
                     file_type: if metadata.is_dir() {
                         FileType::Directory
                     } else if metadata.file_type().is_symlink() {
-                        let link_target = tokio::fs::read_link(&path).await
+                        let link_target = tokio::fs::read_link(&path)
+                            .await
                             .unwrap_or_else(|_| std::path::PathBuf::from(""))
-                            .to_string_lossy().to_string();
+                            .to_string_lossy()
+                            .to_string();
                         FileType::Symlink(link_target)
                     } else {
                         FileType::Regular
@@ -1443,18 +1612,22 @@ impl CorePackageManager {
                 };
                 files.push(file);
             }
-            
+
             if path.is_dir() {
-                Box::pin(self.scan_directory_with_pattern(&path, base_dir, prefix, suffix, files)).await?;
+                Box::pin(self.scan_directory_with_pattern(&path, base_dir, prefix, suffix, files))
+                    .await?;
             }
         }
-        
+
         Ok(())
     }
 
-    async fn convert_core_to_native_package(&self, package: &CorePackage) -> PackerResult<crate::native_format::NativePackage> {
+    async fn convert_core_to_native_package(
+        &self,
+        package: &CorePackage,
+    ) -> PackerResult<crate::native_format::NativePackage> {
         use crate::native_format::{NativePackage, PackageMetadata, PackageScripts};
-        
+
         let metadata = PackageMetadata {
             name: package.name.clone(),
             version: package.version.clone(),
@@ -1470,17 +1643,19 @@ impl CorePackageManager {
 
         let mut files = Vec::new();
         let install_root = &self.config.install_root;
-        
+
         let search_names = self.get_package_search_names(&package.name);
-        
-        self.add_known_package_files(&package.name, install_root, &mut files).await?;
-        
+
+        self.add_known_package_files(&package.name, install_root, &mut files)
+            .await?;
+
         if files.is_empty() {
             for search_name in &search_names {
-                self.scan_directory_for_removal(&install_root, search_name, &mut files).await?;
+                self.scan_directory_for_removal(&install_root, search_name, &mut files)
+                    .await?;
             }
         }
-        
+
         Ok(NativePackage {
             metadata,
             files,
@@ -1490,41 +1665,54 @@ impl CorePackageManager {
                 pre_remove: None,
                 post_remove: None,
             },
-            dependencies: package.dependencies.iter().map(|dep| {
-                crate::native_format::NativeDependency {
+            dependencies: package
+                .dependencies
+                .iter()
+                .map(|dep| crate::native_format::NativeDependency {
                     name: dep.clone(),
                     version_constraint: None,
                     optional: false,
-                }
-            }).collect(),
+                })
+                .collect(),
             conflicts: package.conflicts.clone(),
             signature: None,
         })
     }
-    
-    async fn remove_native_package_files(&self, package: &crate::native_format::NativePackage) -> PackerResult<()> {
+
+    async fn remove_native_package_files(
+        &self,
+        package: &crate::native_format::NativePackage,
+    ) -> PackerResult<()> {
         use crate::native_format::FileType;
-        
+
         println!("🗑️  Removing native package: {}", package.metadata.name);
-        
+
         let mut files_removed = 0;
         let mut directories_to_check = Vec::new();
-        
+
         println!("🔍 Found {} files to remove", package.files.len());
-        
+
         if package.files.is_empty() {
-            println!("🔍 no files found through scanning, using smart removal for {}", package.metadata.name);
+            println!(
+                "🔍 no files found through scanning, using smart removal for {}",
+                package.metadata.name
+            );
             // fallback: scan for package files dynamically
-            files_removed = self.remove_package_files_fallback(&package.metadata.name).await?;
+            files_removed = self
+                .remove_package_files_fallback(&package.metadata.name)
+                .await?;
         } else {
             for file in package.files.iter().rev() {
-                let target_path = self.config.install_root.join(&file.target.trim_start_matches('/'));
-                
+                let target_path = self
+                    .config
+                    .install_root
+                    .join(&file.target.trim_start_matches('/'));
+
                 if target_path.exists() {
                     match file.file_type {
                         FileType::Directory => {
                             directories_to_check.push(target_path);
-                        },
+                        }
                         FileType::Symlink(_) => {
                             if let Err(e) = tokio::fs::remove_file(&target_path).await {
                                 warn!("Failed to remove symlink {:?}: {}", target_path, e);
@@ -1532,7 +1720,7 @@ impl CorePackageManager {
                                 files_removed += 1;
                                 info!("Removed symlink: {:?}", target_path);
                             }
-                        },
+                        }
                         _ => {
                             if let Err(e) = tokio::fs::remove_file(&target_path).await {
                                 warn!("Failed to remove file {:?}: {}", target_path, e);
@@ -1545,11 +1733,11 @@ impl CorePackageManager {
                 }
             }
         }
-        
+
         directories_to_check.sort();
         directories_to_check.dedup();
         directories_to_check.reverse();
-        
+
         for dir in directories_to_check {
             if dir.exists() && dir.is_dir() {
                 match self.is_directory_empty(&dir).await {
@@ -1559,21 +1747,24 @@ impl CorePackageManager {
                         } else {
                             info!("Removed empty directory: {:?}", dir);
                         }
-                    },
+                    }
                     Ok(false) => {
                         info!("Directory not empty, keeping: {:?}", dir);
-                    },
+                    }
                     Err(e) => {
                         warn!("Could not check if directory is empty {:?}: {}", dir, e);
                     }
                 }
             }
         }
-        
-        println!("✅ Successfully removed {} files for package: {}", files_removed, package.metadata.name);
+
+        println!(
+            "✅ Successfully removed {} files for package: {}",
+            files_removed, package.metadata.name
+        );
         Ok(())
     }
-    
+
     async fn is_directory_empty(&self, dir: &std::path::Path) -> PackerResult<bool> {
         let mut entries = tokio::fs::read_dir(dir).await?;
         match entries.next_entry().await? {
@@ -1581,49 +1772,57 @@ impl CorePackageManager {
             None => Ok(true),
         }
     }
-    
-    async fn scan_directory_for_removal(&self, base_dir: &std::path::Path, package_name: &str, files: &mut Vec<crate::native_format::PackageFile>) -> PackerResult<()> {
-        
-        
+
+    async fn scan_directory_for_removal(
+        &self,
+        base_dir: &std::path::Path,
+        package_name: &str,
+        files: &mut Vec<crate::native_format::PackageFile>,
+    ) -> PackerResult<()> {
         let search_dirs = vec!["bin", "sbin", "lib", "share"];
-        
+
         for search_dir in search_dirs {
             let dir_path = base_dir.join(search_dir);
             if !dir_path.exists() {
                 continue;
             }
-            
-            self.recursive_scan_for_package(&dir_path, base_dir, package_name, files).await?;
+
+            self.recursive_scan_for_package(&dir_path, base_dir, package_name, files)
+                .await?;
         }
-        
+
         Ok(())
     }
-    
-    async fn recursive_scan_for_package(&self, current_dir: &std::path::Path, base_dir: &std::path::Path, package_name: &str, files: &mut Vec<crate::native_format::PackageFile>) -> PackerResult<()> {
-        use crate::native_format::{PackageFile, FileType};
-        
+
+    async fn recursive_scan_for_package(
+        &self,
+        current_dir: &std::path::Path,
+        base_dir: &std::path::Path,
+        package_name: &str,
+        files: &mut Vec<crate::native_format::PackageFile>,
+    ) -> PackerResult<()> {
+        use crate::native_format::{FileType, PackageFile};
+
         let mut entries = match tokio::fs::read_dir(current_dir).await {
             Ok(entries) => entries,
             Err(_) => return Ok(()),
         };
-        
+
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            let file_name = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
             if file_name.contains(package_name) || path.to_string_lossy().contains(package_name) {
                 let metadata = match entry.metadata().await {
                     Ok(metadata) => metadata,
                     Err(_) => continue,
                 };
-                
+
                 let relative_path = match path.strip_prefix(base_dir) {
                     Ok(rel) => rel,
                     Err(_) => continue,
                 };
-                
+
                 let file = PackageFile {
                     source: path.to_string_lossy().to_string(),
                     target: format!("/{}", relative_path.to_string_lossy()),
@@ -1633,9 +1832,11 @@ impl CorePackageManager {
                     file_type: if metadata.is_dir() {
                         FileType::Directory
                     } else if metadata.file_type().is_symlink() {
-                        let link_target = tokio::fs::read_link(&path).await
+                        let link_target = tokio::fs::read_link(&path)
+                            .await
                             .unwrap_or_else(|_| std::path::PathBuf::from(""))
-                            .to_string_lossy().to_string();
+                            .to_string_lossy()
+                            .to_string();
                         FileType::Symlink(link_target)
                     } else {
                         FileType::Regular
@@ -1644,19 +1845,20 @@ impl CorePackageManager {
                 };
                 files.push(file);
             }
-            
+
             if path.is_dir() {
-                Box::pin(self.recursive_scan_for_package(&path, base_dir, package_name, files)).await?;
+                Box::pin(self.recursive_scan_for_package(&path, base_dir, package_name, files))
+                    .await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     // fallback method to remove package files when no manifest exists
     async fn remove_package_files_fallback(&self, package_name: &str) -> PackerResult<usize> {
         let mut files_removed = 0;
-        
+
         // search common directories for files related to this package - fallback approach
         let search_dirs = vec![
             "bin",
@@ -1665,39 +1867,45 @@ impl CorePackageManager {
             "share",
             "etc",
             "usr/bin",
-            "usr/sbin", 
+            "usr/sbin",
             "usr/lib",
             "usr/share",
             "opt",
         ];
-        
+
         for dir in search_dirs {
             let search_path = self.config.install_root.join(dir);
             if search_path.exists() {
-                files_removed += self.scan_and_remove_package_files(package_name, &search_path).await?;
+                files_removed += self
+                    .scan_and_remove_package_files(package_name, &search_path)
+                    .await?;
             }
         }
-        
+
         Ok(files_removed)
     }
-    
+
     // scan directory and remove files that match the package name
-    async fn scan_and_remove_package_files(&self, package_name: &str, search_dir: &std::path::Path) -> PackerResult<usize> {
+    async fn scan_and_remove_package_files(
+        &self,
+        package_name: &str,
+        search_dir: &std::path::Path,
+    ) -> PackerResult<usize> {
         let mut files_removed = 0;
-        
+
         let mut entries = tokio::fs::read_dir(search_dir).await?;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             let filename = entry.file_name().to_string_lossy().to_lowercase();
-            
+
             // check if this file is related to our package - simple name matching
-            if filename.contains(&package_name.to_lowercase()) ||
-               filename.starts_with(&package_name.to_lowercase()) ||
-               filename.ends_with(&package_name.to_lowercase()) {
-                   
+            if filename.contains(&package_name.to_lowercase())
+                || filename.starts_with(&package_name.to_lowercase())
+                || filename.ends_with(&package_name.to_lowercase())
+            {
                 let metadata = entry.metadata().await?;
-                
+
                 if metadata.is_dir() {
                     // recursively remove directory
                     match tokio::fs::remove_dir_all(&path).await {
@@ -1723,7 +1931,7 @@ impl CorePackageManager {
                 }
             }
         }
-        
+
         Ok(files_removed)
     }
-} 
+}

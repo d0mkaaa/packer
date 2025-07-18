@@ -238,12 +238,12 @@ impl GPGManager {
     fn find_and_validate_signature_file(&self, package_path: &Path) -> PackerResult<PathBuf> {
         use std::fs::OpenOptions;
         use std::io::Read;
-        
+
         let candidate_paths = vec![
             package_path.with_extension("sig"),
             package_path.with_extension("asc"),
         ];
-        
+
         for candidate_path in candidate_paths {
             match OpenOptions::new()
                 .read(true)
@@ -258,12 +258,13 @@ impl GPGManager {
                                 warn!("Empty signature file: {:?}", candidate_path);
                                 continue;
                             }
-                            
+
                             let content = String::from_utf8_lossy(&buffer[..bytes_read]);
-                            
-                            if content.contains("-----BEGIN PGP SIGNATURE-----") ||
-                               buffer.starts_with(&[0x89, 0x02, 0x1C, 0x03]) ||
-                               content.contains("-----BEGIN PGP MESSAGE-----") {
+
+                            if content.contains("-----BEGIN PGP SIGNATURE-----")
+                                || buffer.starts_with(&[0x89, 0x02, 0x1C, 0x03])
+                                || content.contains("-----BEGIN PGP MESSAGE-----")
+                            {
                                 info!("Found valid signature file: {:?}", candidate_path);
                                 return Ok(candidate_path);
                             } else {
@@ -280,9 +281,9 @@ impl GPGManager {
                 }
             }
         }
-        
+
         Err(PackerError::SecurityError(
-            "No valid signature file found".to_string()
+            "No valid signature file found".to_string(),
         ))
     }
 
@@ -298,23 +299,23 @@ impl GPGManager {
 
         if !file_path.exists() {
             return Err(PackerError::SecurityError(
-                "Package file does not exist".to_string()
-            ));
-        }
-        
-        if !signature_path.exists() {
-            return Err(PackerError::SecurityError(
-                "Signature file does not exist".to_string()
+                "Package file does not exist".to_string(),
             ));
         }
 
-        let canonical_file_path = file_path.canonicalize().map_err(|e| {
-            PackerError::SecurityError(format!("Invalid file path: {}", e))
-        })?;
-        
-        let canonical_signature_path = signature_path.canonicalize().map_err(|e| {
-            PackerError::SecurityError(format!("Invalid signature path: {}", e))
-        })?;
+        if !signature_path.exists() {
+            return Err(PackerError::SecurityError(
+                "Signature file does not exist".to_string(),
+            ));
+        }
+
+        let canonical_file_path = file_path
+            .canonicalize()
+            .map_err(|e| PackerError::SecurityError(format!("Invalid file path: {}", e)))?;
+
+        let canonical_signature_path = signature_path
+            .canonicalize()
+            .map_err(|e| PackerError::SecurityError(format!("Invalid signature path: {}", e)))?;
 
         let mut cmd = Command::new("gpg");
         cmd.env("GNUPGHOME", &self.keyring_path)
@@ -519,19 +520,15 @@ impl GPGManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let output = match tokio::time::timeout(
-            std::time::Duration::from_secs(60),
-            cmd.output(),
-        )
-        .await
-        {
-            Ok(result) => result?,
-            Err(_) => {
-                return Err(PackerError::TimeoutError(
-                    "GPG key import timed out".to_string(),
-                ));
-            }
-        };
+        let output =
+            match tokio::time::timeout(std::time::Duration::from_secs(60), cmd.output()).await {
+                Ok(result) => result?,
+                Err(_) => {
+                    return Err(PackerError::TimeoutError(
+                        "GPG key import timed out".to_string(),
+                    ));
+                }
+            };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

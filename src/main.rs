@@ -40,12 +40,12 @@ async fn main() {
     env_logger::init();
     let matches = build_cli().get_matches();
     let start_time = Instant::now();
-    
+
     if let Err(e) = run_command(matches).await {
         eprintln!("{}: {}", "Error".red().bold(), e);
         std::process::exit(1);
     }
-    
+
     let duration = start_time.elapsed();
     info!(
         "Operation completed in {}",
@@ -110,31 +110,35 @@ fn build_cli() -> Command {
 async fn run_command(matches: ArgMatches) -> packer::PackerResult<()> {
     let config = load_config(&matches).await?;
     let mut package_manager = CorePackageManager::new(config.clone()).await?;
-    
+
     match matches.subcommand() {
         Some(("install", sub_matches)) => {
-            let packages: Vec<String> = sub_matches.get_many::<String>("packages")
+            let packages: Vec<String> = sub_matches
+                .get_many::<String>("packages")
                 .unwrap()
                 .cloned()
                 .collect();
-                
+
             if package_manager.should_auto_update() {
                 println!("🔄 Database is stale, updating automatically before installation...");
                 match package_manager.check_and_auto_update().await {
                     Ok(true) => println!("✅ Database updated successfully!"),
-                    Ok(false) => {},
+                    Ok(false) => {}
                     Err(e) => {
                         println!("⚠️  Failed to auto-update database: {}", e);
                         println!("Proceeding with installation using current data...");
                     }
                 }
             }
-                
-            println!("{}", format!("📦 Installing {} package(s)...", packages.len()).cyan());
-            
+
+            println!(
+                "{}",
+                format!("📦 Installing {} package(s)...", packages.len()).cyan()
+            );
+
             match package_manager.install(&packages).await {
                 Ok(()) => {
-    println!("{}", "✅ Installation completed successfully!".green());
+                    println!("{}", "✅ Installation completed successfully!".green());
                 }
                 Err(e) => {
                     println!("{}: {}", "❌ Installation failed".red(), e);
@@ -142,122 +146,146 @@ async fn run_command(matches: ArgMatches) -> packer::PackerResult<()> {
                 }
             }
         }
-        
+
         Some(("remove", sub_matches)) => {
             let packages: Vec<String> = sub_matches
                 .get_many::<String>("packages")
                 .unwrap()
                 .cloned()
                 .collect();
-            
-            println!("{}", format!("🗑️  Removing {} package(s)...", packages.len()).cyan());
+
+            println!(
+                "{}",
+                format!("🗑️  Removing {} package(s)...", packages.len()).cyan()
+            );
             package_manager.remove(&packages).await?;
-    println!("{}", "✅ Removal completed successfully!".green());
+            println!("{}", "✅ Removal completed successfully!".green());
         }
-        
+
         Some(("search", sub_matches)) => {
             let query = sub_matches.get_one::<String>("query").unwrap();
-            
+
             if package_manager.should_auto_update() {
                 if let Some(age) = package_manager.get_database_age() {
                     let hours = age.num_hours();
                     let days = age.num_days();
                     if days > 0 {
-                        println!("⚠️  Database is {} days old. Consider running 'packer update'", days);
+                        println!(
+                            "⚠️  Database is {} days old. Consider running 'packer update'",
+                            days
+                        );
                     } else if hours > 6 {
-                        println!("⚠️  Database is {} hours old. Consider running 'packer update'", hours);
+                        println!(
+                            "⚠️  Database is {} hours old. Consider running 'packer update'",
+                            hours
+                        );
                     }
                 }
             }
-            
+
             println!("{}", format!("🔍 Searching for: {}", query).cyan());
             let results = package_manager.search(query).await?;
-            
+
             if results.is_empty() {
                 println!("{}", "No packages found anywhere.".yellow());
-        return Ok(());
-    }
-            
+                return Ok(());
+            }
+
             println!("\n{}", "Search Results:".bold());
-    println!("{}", "=".repeat(80));
-            
+            println!("{}", "=".repeat(80));
+
             for (i, package) in results.iter().enumerate() {
                 if i >= 20 {
                     println!("... and {} more results", results.len() - 20);
                     break;
                 }
-                
+
                 let status_icon = match package_manager.get_package_status(&package.name) {
                     InstallStatus::Installed => "✅",
                     InstallStatus::UpdateAvailable(_) => "🔄",
                     _ => "📦",
                 };
-                
-                println!("{} {}/{} {} [{}]", 
+
+                println!(
+                    "{} {}/{} {} [{}]",
                     status_icon,
                     package.repository.blue(),
-                package.name.bold(),
-                package.version.green(),
+                    package.name.bold(),
+                    package.version.green(),
                     package.arch.dimmed()
                 );
-                
+
                 if !package.description.is_empty() {
                     println!("    {}", package.description.dimmed());
                 }
                 println!();
             }
         }
-        
+
         Some(("list", _)) => {
             println!("{}", "📋 Installed Packages:".cyan().bold());
             let installed = package_manager.list_installed();
-            
+
             if installed.is_empty() {
                 println!("{}", "No packages installed.".yellow());
                 return Ok(());
             }
-            
+
             println!("{}", "=".repeat(80));
             let package_count = installed.len();
-            for package in &installed {  // pls use reference to avoid moving
-                let install_date = package.install_date
+            for package in &installed {
+                // pls use reference to avoid moving
+                let install_date = package
+                    .install_date
                     .map(|d| d.format("%Y-%m-%d").to_string())
                     .unwrap_or_else(|| "unknown".to_string());
-                
-                println!("{}/{} {} [{}] (installed: {})",
+
+                println!(
+                    "{}/{} {} [{}] (installed: {})",
                     package.repository.blue(),
                     package.name.bold(),
                     package.version.green(),
                     package.arch.dimmed(),
                     install_date.dimmed()
                 );
-                
+
                 if !package.description.is_empty() {
                     println!("    {}", package.description.dimmed());
                 }
             }
             println!("\nTotal: {} packages", package_count);
         }
-        
+
         Some(("info", sub_matches)) => {
             let package_name = sub_matches.get_one::<String>("package").unwrap();
             let status = package_manager.get_package_status(package_name);
-            
-            println!("{}", format!("📋 Package Information: {}", package_name).cyan().bold());
+
+            println!(
+                "{}",
+                format!("📋 Package Information: {}", package_name)
+                    .cyan()
+                    .bold()
+            );
             println!("{}", "=".repeat(50));
-            
+
             match status {
                 InstallStatus::Installed => {
-                    if let Some(pkg) = package_manager.list_installed().iter()
-                        .find(|p| p.name == *package_name) {
+                    if let Some(pkg) = package_manager
+                        .list_installed()
+                        .iter()
+                        .find(|p| p.name == *package_name)
+                    {
                         display_package_info(pkg);
                     }
                 }
                 InstallStatus::UpdateAvailable(new_version) => {
                     println!("{}", "Status: Update Available".yellow());
                     println!("New version: {}", new_version.green());
-                    if let Some(pkg) = package_manager.list_installed().iter()
-                        .find(|p| p.name == *package_name) {
+                    if let Some(pkg) = package_manager
+                        .list_installed()
+                        .iter()
+                        .find(|p| p.name == *package_name)
+                    {
                         display_package_info(pkg);
                     }
                 }
@@ -268,16 +296,16 @@ async fn run_command(matches: ArgMatches) -> packer::PackerResult<()> {
                             display_package_info(pkg);
                         }
                     }
-        }
-        _ => {
+                }
+                _ => {
                     println!("{}", "Package not found".red());
                 }
             }
         }
-        
+
         Some(("update", _)) => {
             println!("{}", "🔄 Updating package database...".cyan());
-            
+
             if let Some(age) = package_manager.get_database_age() {
                 let hours = age.num_hours();
                 let days = age.num_days();
@@ -285,59 +313,69 @@ async fn run_command(matches: ArgMatches) -> packer::PackerResult<()> {
                     println!("📅 Current database is {} days old", days);
                 } else if hours > 0 {
                     println!("📅 Current database is {} hours old", hours);
-                    } else {
+                } else {
                     println!("📅 Current database is less than 1 hour old");
                 }
             } else {
                 println!("📅 No existing database found");
             }
-            
+
             match package_manager.update_database().await {
                 Ok(()) => {
                     let stats = package_manager.get_database_stats();
                     println!("{}", "✅ Database updated successfully!".green());
-                    println!("📊 Official packages: {}", stats.official_packages.to_string().bold());
+                    println!(
+                        "📊 Official packages: {}",
+                        stats.official_packages.to_string().bold()
+                    );
                     println!("📊 AUR packages: {}", stats.aur_packages.to_string().bold());
-                    println!("📊 Total packages: {}", stats.total_packages.to_string().bold());
-                    
+                    println!(
+                        "📊 Total packages: {}",
+                        stats.total_packages.to_string().bold()
+                    );
+
                     if let Some(last_updated) = stats.last_updated {
-                        println!("🕒 Last updated: {}", last_updated.format("%Y-%m-%d %H:%M:%S UTC"));
+                        println!(
+                            "🕒 Last updated: {}",
+                            last_updated.format("%Y-%m-%d %H:%M:%S UTC")
+                        );
                     }
-                },
-        Err(e) => {
+                }
+                Err(e) => {
                     println!("{}: {}", "❌ Failed to update database".red(), e);
                 }
             }
         }
-        
+
         Some(("upgrade", _)) => {
             println!("{}", "🔄 Checking for upgrades...".cyan());
             let installed = package_manager.list_installed();
             let mut upgradeable = Vec::new();
-            
+
             for package in installed {
-                if let InstallStatus::UpdateAvailable(new_version) = 
-                    package_manager.get_package_status(&package.name) {
+                if let InstallStatus::UpdateAvailable(new_version) =
+                    package_manager.get_package_status(&package.name)
+                {
                     upgradeable.push((package.name.clone(), package.version.clone(), new_version));
                 }
             }
-            
+
             if upgradeable.is_empty() {
                 println!("{}", "✅ All packages are up to date!".green());
-    } else {
+            } else {
                 println!("Found {} upgradeable packages:", upgradeable.len());
                 for (name, old_ver, new_ver) in &upgradeable {
                     println!("  {} {} → {}", name.bold(), old_ver.red(), new_ver.green());
                 }
-                
+
                 print!("Proceed with upgrade? [Y/n] ");
                 std::io::stdout().flush().unwrap();
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input).unwrap();
-                
+
                 if input.trim().is_empty() || input.trim().to_lowercase() == "y" {
-                    let package_names: Vec<String> = upgradeable.into_iter()
-                        .map(|(name, _, _)| name).collect();
+                    let package_names: Vec<String> =
+                        upgradeable.into_iter().map(|(name, _, _)| name).collect();
                     package_manager.install(&package_names).await?;
                     println!("{}", "✅ Upgrade completed!".green());
                 } else {
@@ -346,13 +384,11 @@ async fn run_command(matches: ArgMatches) -> packer::PackerResult<()> {
             }
         }
 
-
-        
         _ => {
             println!("❌ Invalid command. Use --help for usage information.");
         }
     }
-    
+
     Ok(())
 }
 
@@ -362,37 +398,37 @@ fn display_package_info(package: &packer::core::CorePackage) {
     println!("Repository: {}", package.repository.blue());
     println!("Architecture: {}", package.arch);
     println!("Description: {}", package.description);
-    
+
     if package.download_size > 0 {
         println!("Download Size: {}", format_size(package.download_size));
     }
     if package.installed_size > 0 {
         println!("Installed Size: {}", format_size(package.installed_size));
     }
-    
+
     if !package.dependencies.is_empty() {
         println!("Dependencies: {}", package.dependencies.join(", "));
     }
-    
+
     if !package.maintainer.is_empty() {
         println!("Maintainer: {}", package.maintainer);
     }
-    
+
     if !package.url.is_empty() {
         println!("URL: {}", package.url.blue().underline());
     }
-    
+
     if let Some(install_date) = package.install_date {
         println!("Installed: {}", install_date.format("%Y-%m-%d %H:%M:%S"));
     }
-    
+
     println!("Source Type: {:?}", package.source_type);
 }
 
 async fn load_config(matches: &ArgMatches) -> packer::PackerResult<Config> {
     if let Some(config_path) = matches.get_one::<String>("config") {
         Config::load(Some(config_path))
-                } else {
+    } else {
         Config::load(None)
     }
 }

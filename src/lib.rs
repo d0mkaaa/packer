@@ -15,10 +15,10 @@ pub mod storage;
 pub mod utils;
 
 pub use config::Config;
-pub use core::{CorePackageManager, CorePackage, SourceType, InstallStatus};
+pub use core::{CorePackage, CorePackageManager, InstallStatus, SourceType};
 pub use error::{PackerError, PackerResult};
 pub use fast_resolver::{FastDependencyResolver, ResolutionResult};
-pub use native_db::{NativePackageDatabase, DatabaseStats};
+pub use native_db::{DatabaseStats, NativePackageDatabase};
 pub use native_format::{NativePackage, NativePackageManager, PackageFormat, PackageMetadata};
 pub use package::PackageManager;
 

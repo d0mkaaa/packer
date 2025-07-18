@@ -1671,14 +1671,22 @@ impl RepositoryManager {
             } else {
                 (
                     "0.1.0".to_string(),
-                    format!("https://github.com/{}/{}/releases/latest", repo_info["owner"]["login"].as_str().unwrap_or("unknown"), repo_info["name"].as_str().unwrap_or("unknown")),
+                    format!(
+                        "https://github.com/{}/{}/releases/latest",
+                        repo_info["owner"]["login"].as_str().unwrap_or("unknown"),
+                        repo_info["name"].as_str().unwrap_or("unknown")
+                    ),
                     0,
                 )
             }
         } else {
             (
                 "0.1.0".to_string(),
-                format!("https://github.com/{}/{}/releases/latest", repo_info["owner"]["login"].as_str().unwrap_or("unknown"), repo_info["name"].as_str().unwrap_or("unknown")),
+                format!(
+                    "https://github.com/{}/{}/releases/latest",
+                    repo_info["owner"]["login"].as_str().unwrap_or("unknown"),
+                    repo_info["name"].as_str().unwrap_or("unknown")
+                ),
                 0,
             )
         };
@@ -1790,7 +1798,10 @@ impl RepositoryManager {
         }
         // skip aur search if this is an official arch package
         if let Some(package) = self.get_package_from_native(name).await? {
-            if package.repository == "core" || package.repository == "extra" || package.repository == "community" {
+            if package.repository == "core"
+                || package.repository == "extra"
+                || package.repository == "community"
+            {
                 // this is an official arch package, don't search aur
                 info!("found official arch package {}, skipping aur search", name);
                 return Ok(Some(package));
@@ -1808,7 +1819,7 @@ impl RepositoryManager {
     // Removed: get_package_from_pacman - now using native database lookup
     async fn get_package_from_native(&self, name: &str) -> PackerResult<Option<Package>> {
         info!("getting package {} from native database", name);
-        
+
         match self.search_packages(name, true, Some(1)).await {
             Ok(packages) => {
                 if let Some(package) = packages.into_iter().find(|p| p.name == name) {
@@ -1819,7 +1830,7 @@ impl RepositoryManager {
                 warn!("native database search failed: {}", e);
             }
         }
-        
+
         warn!("package {} not found in native database", name);
         Ok(None)
     }
@@ -1853,65 +1864,67 @@ impl RepositoryManager {
         limit: Option<usize>,
     ) -> PackerResult<Vec<Package>> {
         let mut all_packages = Vec::new();
-        
+
         info!("searching local database for: {}", query);
         let mut found_locally = false;
         for repo_entry in self.repositories.iter() {
             let repo = repo_entry.value();
             for package in repo.packages.values() {
-                if (exact && package.name == query) || 
-                   (!exact && (package.name.contains(query) || package.description.contains(query))) {
+                if (exact && package.name == query)
+                    || (!exact
+                        && (package.name.contains(query) || package.description.contains(query)))
+                {
                     all_packages.push(package.clone());
                     found_locally = true;
                 }
             }
         }
-        
+
         if found_locally {
             info!("found {} packages in local database", all_packages.len());
         } else {
             info!("no packages found in local database");
         }
-        
+
         if all_packages.is_empty() || (!exact && all_packages.len() < 20) {
             info!("searching aur for additional results");
             match self.search_aur_directly(query, exact).await {
                 Ok(Some(aur_packages)) => {
                     info!("found {} packages via aur", aur_packages.len());
                     all_packages.extend(aur_packages);
-                },
+                }
                 Ok(None) => {
                     info!("no aur packages found");
-                },
+                }
                 Err(e) => {
                     warn!("aur search failed: {}", e);
                 }
             }
         }
-        
+
         if exact {
             all_packages.retain(|p| p.name == query);
         }
-        
+
         let mut seen_names = std::collections::HashSet::new();
         let mut unique_packages = Vec::new();
-        
+
         for package in &all_packages {
             if package.repository != "aur" && seen_names.insert(package.name.clone()) {
                 unique_packages.push(package.clone());
             }
         }
-        
+
         for package in &all_packages {
             if package.repository == "aur" && seen_names.insert(package.name.clone()) {
                 unique_packages.push(package.clone());
             }
         }
-        
+
         if let Some(limit) = limit {
             unique_packages.truncate(limit);
         }
-        
+
         info!("returning {} unique packages", unique_packages.len());
         Ok(unique_packages)
     }
@@ -2169,7 +2182,7 @@ impl RepositoryManager {
                 );
                 debug!("arch package download url: {}", url);
                 Ok(url)
-            },
+            }
             RepositoryType::GitHub => {
                 if package.url.contains("github.com") {
                     Ok(format!(
@@ -2594,4 +2607,3 @@ fn calculate_relevance_score(name: &str, description: &str, query: &str) -> f32 
 
     score.max(0.0)
 }
-

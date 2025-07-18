@@ -113,15 +113,20 @@ impl NativePackageManager {
             self.run_script(script, "post-install").await?;
         }
 
-        self.installed_packages.insert(package.metadata.name.clone(), package.clone());
+        self.installed_packages
+            .insert(package.metadata.name.clone(), package.clone());
 
         println!("✅ Successfully installed: {}", package.metadata.name);
         Ok(())
     }
 
     pub async fn remove_package(&mut self, package_name: &str) -> PackerResult<()> {
-        let package = self.installed_packages.get(package_name)
-            .ok_or_else(|| crate::error::PackerError::PackageNotInstalled(package_name.to_string()))?
+        let package = self
+            .installed_packages
+            .get(package_name)
+            .ok_or_else(|| {
+                crate::error::PackerError::PackageNotInstalled(package_name.to_string())
+            })?
             .clone();
 
         println!("🗑️  Removing native package: {}", package_name);
@@ -149,10 +154,11 @@ impl NativePackageManager {
     async fn check_dependencies(&self, dependencies: &[NativeDependency]) -> PackerResult<()> {
         for dep in dependencies {
             if !dep.optional && !self.is_dependency_satisfied(dep)? {
-                return Err(crate::error::PackerError::DependencyError(
-                    format!("Missing dependency: {} {}", dep.name, 
-                        dep.version_constraint.as_deref().unwrap_or("any"))
-                ));
+                return Err(crate::error::PackerError::DependencyError(format!(
+                    "Missing dependency: {} {}",
+                    dep.name,
+                    dep.version_constraint.as_deref().unwrap_or("any")
+                )));
             }
         }
         Ok(())
@@ -161,9 +167,10 @@ impl NativePackageManager {
     async fn check_conflicts(&self, conflicts: &[String]) -> PackerResult<()> {
         for conflict in conflicts {
             if self.installed_packages.contains_key(conflict) {
-                return Err(crate::error::PackerError::ConflictError(
-                    format!("Package conflicts with installed package: {}", conflict)
-                ));
+                return Err(crate::error::PackerError::ConflictError(format!(
+                    "Package conflicts with installed package: {}",
+                    conflict
+                )));
             }
         }
         Ok(())
@@ -171,7 +178,7 @@ impl NativePackageManager {
 
     async fn install_file(&self, file: &PackageFile) -> PackerResult<()> {
         let target_path = self.install_root.join(&file.target.trim_start_matches('/'));
-        
+
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent).await?;
         }
@@ -185,59 +192,103 @@ impl NativePackageManager {
                         if metadata.is_file() {
                             if target_path.exists() {
                                 if let Err(e) = tokio::fs::remove_file(&target_path).await {
-                                    println!("⚠️  Failed to remove existing file {}: {}", target_path.display(), e);
+                                    println!(
+                                        "⚠️  Failed to remove existing file {}: {}",
+                                        target_path.display(),
+                                        e
+                                    );
                                 }
                             }
                             fs::copy(source_path, &target_path).await?;
                         } else if metadata.is_dir() {
                             fs::create_dir_all(&target_path).await?;
-                                                 } else if metadata.file_type().is_symlink() {
-                                 let link_target = tokio::fs::read_link(&source_path).await?;
-                                 let target_str = link_target.to_string_lossy();
-                                 if target_str.starts_with("/") {
-                                     let target_within_install_root = self.install_root.join(&target_str.trim_start_matches('/'));
-                                     if target_within_install_root.exists() {
-                                         if target_path.exists() {
-                                             if let Err(e) = tokio::fs::remove_file(&target_path).await {
-                                                 println!("⚠️  Failed to remove existing file {}: {}", target_path.display(), e);
-                                             }
-                                         }
-                                         match tokio::fs::symlink(&target_within_install_root, &target_path).await {
-                                             Ok(()) => {
-                                                 println!("✅ Created symlink {} -> {}", target_path.display(), target_within_install_root.display());
-                                             },
-                                             Err(e) => {
-                                                 println!("⚠️  Failed to create symlink {} -> {}: {}", target_path.display(), target_within_install_root.display(), e);
-                                             }
-                                         }
-                                     } else {
-                                         println!("⚠️  Skipping symlink {} -> {} (target does not exist at {})", target_path.display(), target_str, target_within_install_root.display());
-                                     }
-                                 } else {
-                                     if target_path.exists() {
-                                         if let Err(e) = tokio::fs::remove_file(&target_path).await {
-                                             println!("⚠️  Failed to remove existing file {}: {}", target_path.display(), e);
-                                         }
-                                     }
-                                     tokio::fs::symlink(&link_target, &target_path).await?;
-                                 }
-                             } else {
-                                 println!("⚠️  Skipping special file: {}", source_path.display());
-                             }
+                        } else if metadata.file_type().is_symlink() {
+                            let link_target = tokio::fs::read_link(&source_path).await?;
+                            let target_str = link_target.to_string_lossy();
+                            if target_str.starts_with("/") {
+                                let target_within_install_root =
+                                    self.install_root.join(&target_str.trim_start_matches('/'));
+                                if target_within_install_root.exists() {
+                                    if target_path.exists() {
+                                        if let Err(e) = tokio::fs::remove_file(&target_path).await {
+                                            println!(
+                                                "⚠️  Failed to remove existing file {}: {}",
+                                                target_path.display(),
+                                                e
+                                            );
+                                        }
+                                    }
+                                    match tokio::fs::symlink(
+                                        &target_within_install_root,
+                                        &target_path,
+                                    )
+                                    .await
+                                    {
+                                        Ok(()) => {
+                                            println!(
+                                                "✅ Created symlink {} -> {}",
+                                                target_path.display(),
+                                                target_within_install_root.display()
+                                            );
+                                        }
+                                        Err(e) => {
+                                            println!(
+                                                "⚠️  Failed to create symlink {} -> {}: {}",
+                                                target_path.display(),
+                                                target_within_install_root.display(),
+                                                e
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    println!(
+                                        "⚠️  Skipping symlink {} -> {} (target does not exist at {})",
+                                        target_path.display(),
+                                        target_str,
+                                        target_within_install_root.display()
+                                    );
+                                }
+                            } else {
+                                if target_path.exists() {
+                                    if let Err(e) = tokio::fs::remove_file(&target_path).await {
+                                        println!(
+                                            "⚠️  Failed to remove existing file {}: {}",
+                                            target_path.display(),
+                                            e
+                                        );
+                                    }
+                                }
+                                tokio::fs::symlink(&link_target, &target_path).await?;
+                            }
+                        } else {
+                            println!("⚠️  Skipping special file: {}", source_path.display());
+                        }
                     } else {
                         if target_path.exists() {
                             if let Err(e) = tokio::fs::remove_file(&target_path).await {
-                                println!("⚠️  Failed to remove existing file {}: {}", target_path.display(), e);
+                                println!(
+                                    "⚠️  Failed to remove existing file {}: {}",
+                                    target_path.display(),
+                                    e
+                                );
                             }
                         }
                         if file.target.contains("/bin/") {
-                            let package_name = target_path.file_name()
+                            let package_name = target_path
+                                .file_name()
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("unknown");
-                            let script_content = format!("#!/bin/bash\n# Native packer installation of {}\necho 'Command {} installed via packer (native)'\n", package_name, package_name);
+                            let script_content = format!(
+                                "#!/bin/bash\n# Native packer installation of {}\necho 'Command {} installed via packer (native)'\n",
+                                package_name, package_name
+                            );
                             fs::write(&target_path, script_content).await?;
                         } else {
-                            fs::write(&target_path, format!("# File from package: {}\n", file.target)).await?;
+                            fs::write(
+                                &target_path,
+                                format!("# File from package: {}\n", file.target),
+                            )
+                            .await?;
                         }
                     }
                 } else {
@@ -247,7 +298,11 @@ impl NativePackageManager {
                         if metadata.is_file() {
                             if target_path.exists() {
                                 if let Err(e) = tokio::fs::remove_file(&target_path).await {
-                                    println!("⚠️  Failed to remove existing file {}: {}", target_path.display(), e);
+                                    println!(
+                                        "⚠️  Failed to remove existing file {}: {}",
+                                        target_path.display(),
+                                        e
+                                    );
                                 }
                             }
                             fs::copy(source_path, &target_path).await?;
@@ -258,28 +313,58 @@ impl NativePackageManager {
                                 let link_target = tokio::fs::read_link(&source_path).await?;
                                 let target_str = link_target.to_string_lossy();
                                 if target_str.starts_with("/") {
-                                    let target_within_install_root = self.install_root.join(&target_str.trim_start_matches('/'));
+                                    let target_within_install_root =
+                                        self.install_root.join(&target_str.trim_start_matches('/'));
                                     if target_within_install_root.exists() {
                                         if target_path.exists() {
-                                            if let Err(e) = tokio::fs::remove_file(&target_path).await {
-                                                println!("⚠️  Failed to remove existing file {}: {}", target_path.display(), e);
+                                            if let Err(e) =
+                                                tokio::fs::remove_file(&target_path).await
+                                            {
+                                                println!(
+                                                    "⚠️  Failed to remove existing file {}: {}",
+                                                    target_path.display(),
+                                                    e
+                                                );
                                             }
                                         }
-                                        match tokio::fs::symlink(&target_within_install_root, &target_path).await {
+                                        match tokio::fs::symlink(
+                                            &target_within_install_root,
+                                            &target_path,
+                                        )
+                                        .await
+                                        {
                                             Ok(()) => {
-                                                println!("✅ Created symlink {} -> {}", target_path.display(), target_within_install_root.display());
-                                            },
+                                                println!(
+                                                    "✅ Created symlink {} -> {}",
+                                                    target_path.display(),
+                                                    target_within_install_root.display()
+                                                );
+                                            }
                                             Err(e) => {
-                                                println!("⚠️  Failed to create symlink {} -> {}: {}", target_path.display(), target_within_install_root.display(), e);
+                                                println!(
+                                                    "⚠️  Failed to create symlink {} -> {}: {}",
+                                                    target_path.display(),
+                                                    target_within_install_root.display(),
+                                                    e
+                                                );
                                             }
                                         }
                                     } else {
-                                        println!("⚠️  Skipping symlink {} -> {} (target does not exist at {})", target_path.display(), target_str, target_within_install_root.display());
+                                        println!(
+                                            "⚠️  Skipping symlink {} -> {} (target does not exist at {})",
+                                            target_path.display(),
+                                            target_str,
+                                            target_within_install_root.display()
+                                        );
                                     }
                                 } else {
                                     if target_path.exists() {
                                         if let Err(e) = tokio::fs::remove_file(&target_path).await {
-                                            println!("⚠️  Failed to remove existing file {}: {}", target_path.display(), e);
+                                            println!(
+                                                "⚠️  Failed to remove existing file {}: {}",
+                                                target_path.display(),
+                                                e
+                                            );
                                         }
                                     }
                                     tokio::fs::symlink(&link_target, &target_path).await?;
@@ -291,75 +376,112 @@ impl NativePackageManager {
                     } else {
                         if target_path.exists() {
                             if let Err(e) = tokio::fs::remove_file(&target_path).await {
-                                println!("⚠️  Failed to remove existing file {}: {}", target_path.display(), e);
+                                println!(
+                                    "⚠️  Failed to remove existing file {}: {}",
+                                    target_path.display(),
+                                    e
+                                );
                             }
                         }
                         if file.target.contains("/bin/") {
-                            let package_name = target_path.file_name()
+                            let package_name = target_path
+                                .file_name()
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("unknown");
-                            let script_content = format!("#!/bin/bash\n# Native packer installation of {}\necho 'Command {} installed via packer (native)'\necho 'Note: This is a minimal implementation. For full functionality, reinstall with: packer install {}'\n", package_name, package_name, package_name);
+                            let script_content = format!(
+                                "#!/bin/bash\n# Native packer installation of {}\necho 'Command {} installed via packer (native)'\necho 'Note: This is a minimal implementation. For full functionality, reinstall with: packer install {}'\n",
+                                package_name, package_name, package_name
+                            );
                             fs::write(&target_path, script_content).await?;
                         } else {
-                            fs::write(&target_path, format!("# File from package: {}\n", file.target)).await?;
+                            fs::write(
+                                &target_path,
+                                format!("# File from package: {}\n", file.target),
+                            )
+                            .await?;
                         }
                     }
                 }
-            },
+            }
             FileType::Directory => {
                 fs::create_dir_all(&target_path).await?;
-            },
+            }
             FileType::Symlink(ref target) => {
                 if target.starts_with("/") {
-                    let target_within_install_root = self.install_root.join(&target.trim_start_matches('/'));
+                    let target_within_install_root =
+                        self.install_root.join(&target.trim_start_matches('/'));
                     if target_within_install_root.exists() {
                         if target_path.exists() {
                             if let Err(e) = tokio::fs::remove_file(&target_path).await {
-                                println!("⚠️  Failed to remove existing file {}: {}", target_path.display(), e);
+                                println!(
+                                    "⚠️  Failed to remove existing file {}: {}",
+                                    target_path.display(),
+                                    e
+                                );
                             }
                         }
                         match tokio::fs::symlink(&target_within_install_root, &target_path).await {
                             Ok(()) => {
-                                println!("✅ Created symlink {} -> {}", target_path.display(), target_within_install_root.display());
-                            },
+                                println!(
+                                    "✅ Created symlink {} -> {}",
+                                    target_path.display(),
+                                    target_within_install_root.display()
+                                );
+                            }
                             Err(e) => {
-                                println!("⚠️  Failed to create symlink {} -> {}: {}", target_path.display(), target_within_install_root.display(), e);
+                                println!(
+                                    "⚠️  Failed to create symlink {} -> {}: {}",
+                                    target_path.display(),
+                                    target_within_install_root.display(),
+                                    e
+                                );
                             }
                         }
                     } else {
-                        println!("⚠️  Skipping symlink {} -> {} (target does not exist at {})", target_path.display(), target, target_within_install_root.display());
+                        println!(
+                            "⚠️  Skipping symlink {} -> {} (target does not exist at {})",
+                            target_path.display(),
+                            target,
+                            target_within_install_root.display()
+                        );
                     }
                 } else {
                     if target_path.exists() {
                         if let Err(e) = tokio::fs::remove_file(&target_path).await {
-                            println!("⚠️  Failed to remove existing file {}: {}", target_path.display(), e);
+                            println!(
+                                "⚠️  Failed to remove existing file {}: {}",
+                                target_path.display(),
+                                e
+                            );
                         }
                     }
                     tokio::fs::symlink(target, &target_path).await?;
                 }
-            },
+            }
             _ => {
                 println!("⚠️  Skipping special file type: {:?}", file.file_type);
             }
         }
 
-        self.system_manager.set_file_permissions(&target_path, file).await?;
+        self.system_manager
+            .set_file_permissions(&target_path, file)
+            .await?;
 
         Ok(())
     }
 
     async fn remove_file(&self, file: &PackageFile) -> PackerResult<()> {
         let target_path = self.install_root.join(&file.target.trim_start_matches('/'));
-        
+
         if target_path.exists() {
             match file.file_type {
-                FileType::Directory => {    
+                FileType::Directory => {
                     if let Ok(mut entries) = fs::read_dir(&target_path).await {
                         if entries.next_entry().await?.is_none() {
                             fs::remove_dir(&target_path).await?;
                         }
                     }
-                },
+                }
                 _ => {
                     fs::remove_file(&target_path).await?;
                 }
@@ -371,18 +493,15 @@ impl NativePackageManager {
 
     async fn run_script(&self, script: &str, phase: &str) -> PackerResult<()> {
         println!("📜 Running {} script", phase);
-        
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(script)
-            .output()
-            .await?;
+
+        let output = Command::new("sh").arg("-c").arg(script).output().await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(crate::error::PackerError::ScriptFailed(
-                format!("{} script failed: {}", phase, stderr)
-            ));
+            return Err(crate::error::PackerError::ScriptFailed(format!(
+                "{} script failed: {}",
+                phase, stderr
+            )));
         }
 
         Ok(())
@@ -420,7 +539,7 @@ impl SystemManager {
                         .arg("daemon-reload")
                         .output()
                         .await?;
-                        
+
                     println!("🔄 Reloaded systemd daemon for new service");
                 }
             }
@@ -445,7 +564,7 @@ impl SystemManager {
                                 .arg(name)
                                 .output()
                                 .await?;
-                                
+
                             println!("🛑 Stopped and disabled service: {}", name);
                         }
                     }
@@ -461,10 +580,10 @@ impl SystemManager {
         }
 
         use std::os::unix::fs::PermissionsExt;
-        
+
         let permissions = std::fs::Permissions::from_mode(file.permissions);
         match std::fs::set_permissions(path, permissions) {
-            Ok(()) => {},
+            Ok(()) => {}
             Err(e) => {
                 println!("⚠️  Failed to set permissions on {}: {}", path.display(), e);
                 println!("   Continuing with default permissions...");
@@ -480,7 +599,7 @@ impl SystemManager {
 
 pub struct PackageFormat;
 
-impl PackageFormat {    
+impl PackageFormat {
     pub async fn create_package(
         source_dir: &Path,
         metadata: PackageMetadata,
@@ -489,7 +608,7 @@ impl PackageFormat {
         println!("📦 Creating package: {}", metadata.name);
 
         let files = Self::scan_directory(source_dir).await?;
-        
+
         let package = NativePackage {
             metadata,
             files,
@@ -505,9 +624,9 @@ impl PackageFormat {
         };
 
         let metadata_json = serde_json::to_string_pretty(&package)?;
-        
+
         Self::create_archive(source_dir, &metadata_json, output_path).await?;
-        
+
         println!("✅ Package created: {}", output_path.display());
         Ok(())
     }
@@ -541,14 +660,15 @@ impl PackageFormat {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = PackerResult<()>> + 'a>> {
         Box::pin(async move {
             let mut entries = fs::read_dir(current_dir).await?;
-            
+
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
-                let relative_path = path.strip_prefix(base_dir)
+                let relative_path = path
+                    .strip_prefix(base_dir)
                     .map_err(|e| crate::error::PackerError::RepositoryError(e.to_string()))?;
 
                 let metadata = entry.metadata().await?;
-                
+
                 let file = PackageFile {
                     source: relative_path.to_string_lossy().to_string(),
                     target: format!("/{}", relative_path.to_string_lossy()),
@@ -560,9 +680,10 @@ impl PackageFormat {
                     } else {
                         FileType::Regular
                     },
-                    checksum: Self::calculate_file_checksum(&path).unwrap_or_else(|_| "unknown".to_string()),
+                    checksum: Self::calculate_file_checksum(&path)
+                        .unwrap_or_else(|_| "unknown".to_string()),
                 };
-                
+
                 files.push(file);
 
                 if metadata.is_dir() {
@@ -609,22 +730,22 @@ impl PackageFormat {
 
         Ok(())
     }
-    
+
     // helper method to calculate file checksum
     fn calculate_file_checksum(file_path: &Path) -> PackerResult<String> {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         use std::io::Read;
-        
+
         if file_path.is_dir() {
             return Ok("directory".to_string());
         }
-        
-        let mut file = std::fs::File::open(file_path)
-            .map_err(|e| crate::error::PackerError::Io(e))?;
-        
+
+        let mut file =
+            std::fs::File::open(file_path).map_err(|e| crate::error::PackerError::Io(e))?;
+
         let mut hasher = Sha256::new();
         let mut buffer = [0; 8192];
-        
+
         loop {
             match file.read(&mut buffer) {
                 Ok(0) => break,
@@ -632,8 +753,8 @@ impl PackageFormat {
                 Err(e) => return Err(crate::error::PackerError::Io(e)),
             }
         }
-        
+
         let result = hasher.finalize();
         Ok(format!("{:x}", result))
     }
-} 
+}

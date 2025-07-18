@@ -432,7 +432,7 @@ impl DependencyResolver {
             }
         }
         let search_results = repository_manager
-                            .search_packages(&dependency.name, false, Some(5))
+            .search_packages(&dependency.name, false, Some(5))
             .await?;
         for package in search_results {
             if self.dependency_matches(&package, dependency)

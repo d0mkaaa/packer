@@ -242,11 +242,7 @@ impl Package {
         }
     }
 }
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::{RwLock, Semaphore};
 use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1939,19 +1935,29 @@ impl PackageManager {
     pub async fn install_packages(&mut self, package_names: Vec<String>) -> PackerResult<()> {
         use colored::*;
         use std::io::Write;
-        
+
         println!("{}", "📦 Analyzing packages...".cyan());
-        
-        println!("{}", format!("📥 Installing {} package(s) natively...", package_names.len()).cyan());
-        
+
+        println!(
+            "{}",
+            format!(
+                "📥 Installing {} package(s) natively...",
+                package_names.len()
+            )
+            .cyan()
+        );
+
         for package_name in &package_names {
             print!("  • Installing {}... ", package_name.bold());
             std::io::stdout().flush().unwrap();
-            
-            match Err(PackerError::PackageNotFound(format!("Native installation not yet implemented for {}", package_name))) {
+
+            match Err(PackerError::PackageNotFound(format!(
+                "Native installation not yet implemented for {}",
+                package_name
+            ))) {
                 Ok(()) => {
                     println!("{}", "[✓ Installed]".green());
-                },
+                }
                 Err(e) => {
                     println!("{}", format!("[✗ Failed: {}]", e).red());
                     return Err(e);
@@ -1967,81 +1973,92 @@ impl PackageManager {
     #[allow(dead_code)]
     async fn install_aur_packages(&mut self, package_names: &[String]) -> PackerResult<()> {
         info!("installing aur packages: {:?}", package_names);
-        
+
         for package_name in package_names {
             // get aur package info
-            if let Some(aur_results) = self.repository_manager.search_aur_directly(package_name, true).await? {
+            if let Some(aur_results) = self
+                .repository_manager
+                .search_aur_directly(package_name, true)
+                .await?
+            {
                 if let Some(package) = aur_results.into_iter().find(|p| p.name == *package_name) {
                     info!("building aur package: {}", package.name);
                     self.build_and_install_aur_package(&package).await?;
                 } else {
                     return Err(PackerError::PackageNotFound(package_name.clone()));
                 }
-                    } else {
+            } else {
                 return Err(PackerError::PackageNotFound(package_name.clone()));
             }
         }
-        
+
         Ok(())
     }
 
     // simplified aur building
     async fn build_and_install_aur_package(&mut self, package: &Package) -> PackerResult<()> {
-        use std::process::Stdio;
         use colored::*;
-        
+        use std::process::Stdio;
+
         println!("  📂 Cloning {}...", package.name.bold());
-        
-        // clone aur repo 
+
+        // clone aur repo
         let build_dir = std::env::temp_dir().join(format!("packer-build-{}", package.name));
-        
+
         if build_dir.exists() {
             std::fs::remove_dir_all(&build_dir)?;
         }
-        
+
         // git clone
         let mut clone_cmd = tokio::process::Command::new("git");
-        clone_cmd.arg("clone")
+        clone_cmd
+            .arg("clone")
             .arg(format!("https://aur.archlinux.org/{}.git", package.name))
             .arg(&build_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-            
+
         let clone_output = clone_cmd.output().await?;
-            
+
         if !clone_output.status.success() {
             return Err(PackerError::BuildFailed(format!(
-                "git clone failed for {}", package.name
+                "git clone failed for {}",
+                package.name
             )));
         }
-        
+
         println!("  🔨 Building and installing {}...", package.name.bold());
-        
+
         // makepkg with interactive output
         let mut makepkg_cmd = tokio::process::Command::new("makepkg");
-        makepkg_cmd.arg("-si")
+        makepkg_cmd
+            .arg("-si")
             .arg("--needed")
             .current_dir(&build_dir)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
-            
+
         let mut child = makepkg_cmd.spawn()?;
         let status = child.wait().await?;
-            
+
         if !status.success() {
             return Err(PackerError::BuildFailed(format!(
-                "makepkg failed for {}", package.name
+                "makepkg failed for {}",
+                package.name
             )));
         }
-        
-        println!("  ✅ {} installed successfully", package.name.green().bold());
-        
+
+        println!(
+            "  ✅ {} installed successfully",
+            package.name.green().bold()
+        );
+
         // cleanup
         if build_dir.exists() {
             std::fs::remove_dir_all(&build_dir)?;
         }
-        
+
         Ok(())
     }
 
@@ -2063,26 +2080,26 @@ impl PackageManager {
         dry_run: bool,
     ) -> PackerResult<()> {
         info!("Removing packages: {:?}", package_names);
-        
+
         let mut packages = Vec::new();
         for name in package_names {
             if let Some(package) = self.repository_manager.get_package(name).await? {
                 packages.push(package);
-        } else {
+            } else {
                 warn!("Package {} not found", name);
             }
         }
-        
+
         if dry_run {
             self.show_remove_transaction_summary(&packages);
             return Ok(());
         }
-        
+
         if cascade {
             // TODO: need to implement cascade removal logic
             warn!("Cascade removal not yet implemented, performing simple removal");
         }
-        
+
         self.execute_remove_transaction(packages).await?;
         info!("Removal completed successfully");
         Ok(())
@@ -2124,7 +2141,7 @@ impl PackageManager {
     }
     pub async fn upgrade_packages(&mut self, _force: bool, dry_run: bool) -> PackerResult<()> {
         info!("Upgrading packages");
-        
+
         let transaction = InstallTransaction {
             to_install: Vec::new(),
             to_remove: Vec::new(),
@@ -2140,17 +2157,17 @@ impl PackageManager {
                 trust_score: 1.0,
             },
         };
-        
+
         if transaction.to_upgrade.is_empty() {
             println!("{}", "No packages to upgrade".green());
             return Ok(());
         }
-        
+
         if dry_run {
             self.show_upgrade_transaction_summary(&transaction);
             return Ok(());
         }
-        
+
         self.execute_upgrade_transaction(transaction).await?;
         info!("Upgrade completed successfully ");
         Ok(())
@@ -3026,7 +3043,7 @@ impl PackageManager {
                 let mut paths_to_try = Vec::new();
                 if file.path.starts_with('/') {
                     paths_to_try.push(PathBuf::from(&file.path));
-                            } else {
+                } else {
                     paths_to_try.push(install_root.join(&file.path));
                     paths_to_try.push(PathBuf::from("/").join(&file.path));
                     paths_to_try.push(PathBuf::from(&file.path));
@@ -3345,14 +3362,14 @@ impl PackageManager {
         let rollback_transaction = crate::storage::TransactionRecord {
             id: uuid::Uuid::new_v4().to_string(),
             transaction_type: crate::storage::TransactionType::Rollback,
-            packages: packages,
+            packages,
             timestamp: chrono::Utc::now(),
             success: true,
             error_message: None,
             duration: 0,
             user: whoami::username(),
             size_change: -size_change,
-            security_score: security_score,
+            security_score,
             rollback_info: None,
             status: crate::storage::TransactionStatus::Completed,
             progress: crate::storage::TransactionProgress::default(),
@@ -3400,8 +3417,7 @@ impl PackageManager {
         }
         let package_names: Vec<String> =
             packages_to_upgrade.iter().map(|p| p.name.clone()).collect();
-        self.install_packages(package_names.clone())
-            .await
+        self.install_packages(package_names.clone()).await
     }
     pub async fn check_upgrades(&self) -> PackerResult<Vec<(Package, Package)>> {
         let installed_packages = self.list_installed_packages().await?;
@@ -3460,8 +3476,7 @@ impl PackageManager {
             .await?
             .ok_or_else(|| PackerError::PackageNotFound(package_name.to_string()))?;
         let package_names = vec![package_name.to_string()];
-        self.install_packages(package_names.clone())
-            .await?;
+        self.install_packages(package_names.clone()).await?;
         info!("Package {} reinstalled successfully ", package_name);
         Ok(())
     }
@@ -3471,7 +3486,10 @@ impl PackageManager {
         let updated_count = 0;
         for (package, _) in packages {
             if package.repository == "aur" {
-                warn!("AUR installation scanning not yet implemented for {}", package.name);
+                warn!(
+                    "AUR installation scanning not yet implemented for {}",
+                    package.name
+                );
                 continue;
             }
         }
@@ -3819,4 +3837,3 @@ impl PackageManager {
         Ok(())
     }
 }
-

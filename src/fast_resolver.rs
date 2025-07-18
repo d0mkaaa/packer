@@ -117,7 +117,9 @@ impl FastDependencyResolver {
 
             match self.find_best_package(&package_name, native_db) {
                 Some(package) => {
-                    if let Some(conflict) = self.check_conflicts(&package, &resolved_packages, installed_packages) {
+                    if let Some(conflict) =
+                        self.check_conflicts(&package, &resolved_packages, installed_packages)
+                    {
                         let is_critical = matches!(conflict.severity, ConflictSeverity::Critical);
                         resolution.conflicts.push(conflict);
                         if is_critical {
@@ -127,9 +129,10 @@ impl FastDependencyResolver {
 
                     for dep in &package.dependencies {
                         let dep_name = self.parse_dependency_name(dep);
-                        if !installed_packages.contains_key(&dep_name) 
-                           && !resolved_packages.contains_key(&dep_name) 
-                           && !visited.contains(&dep_name) {
+                        if !installed_packages.contains_key(&dep_name)
+                            && !resolved_packages.contains_key(&dep_name)
+                            && !visited.contains(&dep_name)
+                        {
                             to_resolve.push_back((dep_name, depth + 1));
                         }
                     }
@@ -140,7 +143,9 @@ impl FastDependencyResolver {
                     resolution.conflicts.push(Conflict {
                         package1: package_name.clone(),
                         package2: String::new(),
-                        reason: ConflictReason::NotFound { package: package_name.clone() },
+                        reason: ConflictReason::NotFound {
+                            package: package_name.clone(),
+                        },
                         severity: ConflictSeverity::Critical,
                     });
                 }
@@ -148,7 +153,8 @@ impl FastDependencyResolver {
         }
 
         resolution.install_order = self.calculate_install_order(&resolved_packages);
-        resolution.packages_to_install = resolution.install_order
+        resolution.packages_to_install = resolution
+            .install_order
             .iter()
             .filter_map(|name| resolved_packages.get(name).cloned())
             .collect();
@@ -156,12 +162,19 @@ impl FastDependencyResolver {
         self.validate_resolution(&mut resolution, installed_packages);
 
         resolution.resolution_time = start_time.elapsed();
-        info!("Dependency resolution completed in {:?}", resolution.resolution_time);
-        
+        info!(
+            "Dependency resolution completed in {:?}",
+            resolution.resolution_time
+        );
+
         Ok(resolution)
     }
 
-    fn find_best_package(&self, name: &str, native_db: &NativePackageDatabase) -> Option<CorePackage> {
+    fn find_best_package(
+        &self,
+        name: &str,
+        native_db: &NativePackageDatabase,
+    ) -> Option<CorePackage> {
         if self.prefer_official {
             if let Some(official_pkg) = native_db.get_official_package(name) {
                 return Some(official_pkg.clone());
@@ -179,7 +192,7 @@ impl FastDependencyResolver {
     ) -> Option<Conflict> {
         for dep in &package.dependencies {
             let (dep_name, version_req) = self.parse_dependency_with_version(dep);
-            
+
             if let Some(resolved_pkg) = resolved_packages.get(&dep_name) {
                 if let Some(ref version_req) = version_req {
                     if !self.version_satisfies(&resolved_pkg.version, version_req) {
@@ -214,7 +227,9 @@ impl FastDependencyResolver {
         }
 
         for conflict_pkg in &package.conflicts {
-            if resolved_packages.contains_key(conflict_pkg) || installed_packages.contains_key(conflict_pkg) {
+            if resolved_packages.contains_key(conflict_pkg)
+                || installed_packages.contains_key(conflict_pkg)
+            {
                 return Some(Conflict {
                     package1: package.name.clone(),
                     package2: conflict_pkg.clone(),
@@ -259,7 +274,10 @@ impl FastDependencyResolver {
         order: &mut Vec<String>,
     ) {
         if temp_visited.contains(package_name) {
-            warn!("Circular dependency detected involving package: {}", package_name);
+            warn!(
+                "Circular dependency detected involving package: {}",
+                package_name
+            );
             return;
         }
 
@@ -288,7 +306,8 @@ impl FastDependencyResolver {
         resolution: &mut ResolutionResult,
         installed_packages: &HashMap<String, CorePackage>,
     ) {
-        let package_names: HashSet<String> = resolution.packages_to_install
+        let package_names: HashSet<String> = resolution
+            .packages_to_install
             .iter()
             .map(|p| p.name.clone())
             .collect();
@@ -296,7 +315,8 @@ impl FastDependencyResolver {
         for package in &resolution.packages_to_install {
             for dep in &package.dependencies {
                 let dep_name = self.parse_dependency_name(dep);
-                if !package_names.contains(&dep_name) && !installed_packages.contains_key(&dep_name) {
+                if !package_names.contains(&dep_name) && !installed_packages.contains_key(&dep_name)
+                {
                     resolution.warnings.push(format!(
                         "Package {} requires {} which is not in the resolution set",
                         package.name, dep_name
@@ -324,16 +344,18 @@ impl FastDependencyResolver {
             ));
         }
 
-        info!("Resolution summary: {} official, {} AUR, {} other packages", 
-              official_count, aur_count, other_count);
+        info!(
+            "Resolution summary: {} official, {} AUR, {} other packages",
+            official_count, aur_count, other_count
+        );
     }
 
     fn parse_dependency_name(&self, dep: &str) -> String {
         dep.split(&['=', '>', '<', '~'][..])
-           .next()
-           .unwrap_or(dep)
-           .trim()
-           .to_string()
+            .next()
+            .unwrap_or(dep)
+            .trim()
+            .to_string()
     }
 
     fn parse_dependency_with_version(&self, dep: &str) -> (String, Option<String>) {
@@ -376,19 +398,29 @@ impl FastDependencyResolver {
     }
 
     pub fn is_critical_conflict(&self, conflicts: &[Conflict]) -> bool {
-        conflicts.iter().any(|c| c.severity == ConflictSeverity::Critical)
+        conflicts
+            .iter()
+            .any(|c| c.severity == ConflictSeverity::Critical)
     }
 
     pub fn format_conflicts(&self, conflicts: &[Conflict]) -> Vec<String> {
-        conflicts.iter().map(|conflict| {
-            match &conflict.reason {
-                ConflictReason::VersionConflict { required, available } => {
-                    format!("Version conflict: {} requires {}, but {} is available",
-                           conflict.package1, required, available)
+        conflicts
+            .iter()
+            .map(|conflict| match &conflict.reason {
+                ConflictReason::VersionConflict {
+                    required,
+                    available,
+                } => {
+                    format!(
+                        "Version conflict: {} requires {}, but {} is available",
+                        conflict.package1, required, available
+                    )
                 }
                 ConflictReason::PackageConflict { conflicts_with } => {
-                    format!("Package conflict: {} conflicts with {}",
-                           conflict.package1, conflicts_with)
+                    format!(
+                        "Package conflict: {} conflicts with {}",
+                        conflict.package1, conflicts_with
+                    )
                 }
                 ConflictReason::CircularDependency { cycle } => {
                     format!("Circular dependency: {}", cycle.join(" -> "))
@@ -396,8 +428,8 @@ impl FastDependencyResolver {
                 ConflictReason::NotFound { package } => {
                     format!("Package not found: {}", package)
                 }
-            }
-        }).collect()
+            })
+            .collect()
     }
 }
 
@@ -405,4 +437,4 @@ impl Default for FastDependencyResolver {
     fn default() -> Self {
         Self::new()
     }
-} 
+}

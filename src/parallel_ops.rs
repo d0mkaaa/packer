@@ -598,8 +598,7 @@ impl ParallelOperationsManager {
         }
     }
 
-    async fn release_task_resources(&self, _task: &ParallelTask) {
-    }
+    async fn release_task_resources(&self, _task: &ParallelTask) {}
 
     async fn execute_download_task(&self, task: &ParallelTask) -> TaskResult {
         tokio::time::sleep(task.estimated_duration).await;

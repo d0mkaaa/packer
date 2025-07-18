@@ -1145,10 +1145,10 @@ impl AdvancedTransactionManager {
         _filesystem: &HashMap<String, FileSystemEntry>,
     ) -> PackerResult<String> {
         // calculate actual sha256 checksum of the system state
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         let mut hasher = Sha256::new();
-        
+
         // hash package state
         let mut package_names: Vec<_> = _packages.keys().collect();
         package_names.sort();
@@ -1157,7 +1157,7 @@ impl AdvancedTransactionManager {
                 hasher.update(format!("{}-{}", package.name, package.version).as_bytes());
             }
         }
-        
+
         // hash filesystem state
         let mut fs_paths: Vec<_> = _filesystem.keys().collect();
         fs_paths.sort();
@@ -1166,7 +1166,7 @@ impl AdvancedTransactionManager {
                 hasher.update(format!("{}-{}", entry.path, entry.checksum).as_bytes());
             }
         }
-        
+
         let result = hasher.finalize();
         Ok(format!("{:x}", result))
     }

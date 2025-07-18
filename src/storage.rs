@@ -1144,7 +1144,31 @@ impl AdvancedTransactionManager {
         _packages: &HashMap<String, Package>,
         _filesystem: &HashMap<String, FileSystemEntry>,
     ) -> PackerResult<String> {
-        Ok("checksum_placeholder".to_string())
+        // calculate actual sha256 checksum of the system state
+        use sha2::{Sha256, Digest};
+        
+        let mut hasher = Sha256::new();
+        
+        // hash package state
+        let mut package_names: Vec<_> = _packages.keys().collect();
+        package_names.sort();
+        for name in package_names {
+            if let Some(package) = _packages.get(name) {
+                hasher.update(format!("{}-{}", package.name, package.version).as_bytes());
+            }
+        }
+        
+        // hash filesystem state
+        let mut fs_paths: Vec<_> = _filesystem.keys().collect();
+        fs_paths.sort();
+        for path in fs_paths {
+            if let Some(entry) = _filesystem.get(path) {
+                hasher.update(format!("{}-{}", entry.path, entry.checksum).as_bytes());
+            }
+        }
+        
+        let result = hasher.finalize();
+        Ok(format!("{:x}", result))
     }
 
     async fn create_recovery_point(

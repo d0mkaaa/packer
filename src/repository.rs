@@ -11,7 +11,7 @@ use indicatif::ProgressBar;
 use log::{debug, info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{fs, time::sleep};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryHealth {
@@ -1671,14 +1671,14 @@ impl RepositoryManager {
             } else {
                 (
                     "0.1.0".to_string(),
-                    format!("https://placeholder.example.com"),
+                    format!("https://github.com/{}/{}/releases/latest", repo_info["owner"]["login"].as_str().unwrap_or("unknown"), repo_info["name"].as_str().unwrap_or("unknown")),
                     0,
                 )
             }
         } else {
             (
                 "0.1.0".to_string(),
-                format!("https://placeholder.example.com"),
+                format!("https://github.com/{}/{}/releases/latest", repo_info["owner"]["login"].as_str().unwrap_or("unknown"), repo_info["name"].as_str().unwrap_or("unknown")),
                 0,
             )
         };
@@ -1788,18 +1788,44 @@ impl RepositoryManager {
                 return Ok(Some(package.clone()));
             }
         }
+        // skip aur search if this is an official arch package
+        if let Some(package) = self.get_package_from_native(name).await? {
+            if package.repository == "core" || package.repository == "extra" || package.repository == "community" {
+                // this is an official arch package, don't search aur
+                info!("found official arch package {}, skipping aur search", name);
+                return Ok(Some(package));
+            }
+        }
         if let Some(aur_results) = self.search_aur_directly(name, true).await? {
             if let Some(package) = aur_results.into_iter().find(|p| p.name == name) {
                 return Ok(Some(package));
             }
         }
-        if self.config.auto_discover {
-            if let Some(package) = self.discover_package(name).await? {
-                return Ok(Some(package));
+        // finally for god sake i fixed this line
+        self.get_package_from_native(name).await.map(|opt| opt)
+    }
+
+    // Removed: get_package_from_pacman - now using native database lookup
+    async fn get_package_from_native(&self, name: &str) -> PackerResult<Option<Package>> {
+        info!("getting package {} from native database", name);
+        
+        match self.search_packages(name, true, Some(1)).await {
+            Ok(packages) => {
+                if let Some(package) = packages.into_iter().find(|p| p.name == name) {
+                    return Ok(Some(package));
+                }
+            }
+            Err(e) => {
+                warn!("native database search failed: {}", e);
             }
         }
+        
+        warn!("package {} not found in native database", name);
         Ok(None)
     }
+
+    // Removed: parse_pacman_dependencies and parse_pacman_size - no longer needed with native database
+
     async fn discover_package(&self, name: &str) -> PackerResult<Option<Package>> {
         info!("Auto-discovering package: {}", name);
         if let Some(github_client) = &self.github_client {
@@ -1820,100 +1846,74 @@ impl RepositoryManager {
         }
         Ok(None)
     }
-    pub async fn search_packages(&self, query: &str, exact: bool) -> PackerResult<Vec<Package>> {
-        let mut results = Vec::new();
-        let mut seen_packages = HashSet::new();
-        let query_lower = query.to_lowercase();
-        debug!(
-            "Searching for '{}' in {} repositories",
-            query,
-            self.repositories.len()
-        );
-
-        debug!("Trying AUR search first");
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.search_aur_directly(query, exact),
-        )
-        .await
-        {
-            Ok(Ok(Some(aur_results))) => {
-                debug!("AUR search returned {} results", aur_results.len());
-                for package in aur_results {
-                    if !seen_packages.contains(&package.name) {
-                        seen_packages.insert(package.name.clone());
-                        results.push(package);
-                    }
-                }
-            }
-            Ok(Ok(None)) => {
-                debug!("No AUR results found");
-            }
-            Ok(Err(e)) => {
-                warn!("AUR search failed: {}", e);
-            }
-            Err(_) => {
-                warn!("AUR search timed out");
-            }
-        }
-
-        for repository in self.repositories.iter() {
-            debug!(
-                "Repository '{}' has {} packages ",
-                repository.name,
-                repository.packages.len()
-            );
-            for package in repository.packages.values() {
-                debug!("Checking package '{}'", package.name);
-                let matches = if exact {
-                    package.name == query
-                } else {
-                    package.name.to_lowercase().contains(&query_lower)
-                        || package.description.to_lowercase().contains(&query_lower)
-                };
-                if matches && !seen_packages.contains(&package.name) {
-                    debug!("Package '{}' matches query '{}'", package.name, query);
-                    seen_packages.insert(package.name.clone());
-                    results.push(package.clone());
+    pub async fn search_packages(
+        &self,
+        query: &str,
+        exact: bool,
+        limit: Option<usize>,
+    ) -> PackerResult<Vec<Package>> {
+        let mut all_packages = Vec::new();
+        
+        info!("searching local database for: {}", query);
+        let mut found_locally = false;
+        for repo_entry in self.repositories.iter() {
+            let repo = repo_entry.value();
+            for package in repo.packages.values() {
+                if (exact && package.name == query) || 
+                   (!exact && (package.name.contains(query) || package.description.contains(query))) {
+                    all_packages.push(package.clone());
+                    found_locally = true;
                 }
             }
         }
-
-        if results.is_empty() {
-            debug!("No results in cached data, trying system pacman search");
-            if let Ok(pacman_results) = self.search_with_pacman(query).await {
-                debug!("Pacman search returned {} results", pacman_results.len());
-                for package in pacman_results {
-                    if !seen_packages.contains(&package.name) {
-                        seen_packages.insert(package.name.clone());
-                        results.push(package);
-                    }
+        
+        if found_locally {
+            info!("found {} packages in local database", all_packages.len());
+        } else {
+            info!("no packages found in local database");
+        }
+        
+        if all_packages.is_empty() || (!exact && all_packages.len() < 20) {
+            info!("searching aur for additional results");
+            match self.search_aur_directly(query, exact).await {
+                Ok(Some(aur_packages)) => {
+                    info!("found {} packages via aur", aur_packages.len());
+                    all_packages.extend(aur_packages);
+                },
+                Ok(None) => {
+                    info!("no aur packages found");
+                },
+                Err(e) => {
+                    warn!("aur search failed: {}", e);
                 }
             }
         }
-
-        results.sort_by(|a, b| {
-            let relevance_a = calculate_relevance_score(&a.name, &a.description, query);
-            let relevance_b = calculate_relevance_score(&b.name, &b.description, query);
-            let priority_a = self
-                .repositories
-                .get(&a.repository)
-                .map(|repo| repo.priority)
-                .unwrap_or(1000);
-            let priority_b = self
-                .repositories
-                .get(&b.repository)
-                .map(|repo| repo.priority)
-                .unwrap_or(1000);
-            relevance_b
-                .partial_cmp(&relevance_a)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(priority_a.cmp(&priority_b))
-                .then(a.name.cmp(&b.name))
-        });
-
-        debug!("Search completed. Found {} packages ", results.len());
-        Ok(results)
+        
+        if exact {
+            all_packages.retain(|p| p.name == query);
+        }
+        
+        let mut seen_names = std::collections::HashSet::new();
+        let mut unique_packages = Vec::new();
+        
+        for package in &all_packages {
+            if package.repository != "aur" && seen_names.insert(package.name.clone()) {
+                unique_packages.push(package.clone());
+            }
+        }
+        
+        for package in &all_packages {
+            if package.repository == "aur" && seen_names.insert(package.name.clone()) {
+                unique_packages.push(package.clone());
+            }
+        }
+        
+        if let Some(limit) = limit {
+            unique_packages.truncate(limit);
+        }
+        
+        info!("returning {} unique packages", unique_packages.len());
+        Ok(unique_packages)
     }
     pub async fn search_packages_in_repo(
         &self,
@@ -2068,89 +2068,7 @@ impl RepositoryManager {
         }
     }
 
-    async fn search_with_pacman(&self, query: &str) -> PackerResult<Vec<Package>> {
-        info!("Searching with system pacman for: {}", query);
-        use tokio::process::Command;
-
-        let output = Command::new("pacman")
-            .arg("-Ss")
-            .arg(query)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            warn!("Pacman search failed");
-            return Ok(Vec::new());
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut packages = Vec::new();
-        let mut lines = stdout.lines();
-
-        while let Some(line) = lines.next() {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            if let Some(space_pos) = line.find(' ') {
-                let name_part = &line[..space_pos];
-                let rest = &line[space_pos..].trim();
-
-                if let Some(slash_pos) = name_part.find('/') {
-                    let repo_name = &name_part[..slash_pos];
-                    let package_name = &name_part[slash_pos + 1..];
-
-                    let version = if let Some(bracket_pos) = rest.find('[') {
-                        rest[..bracket_pos].trim()
-                    } else {
-                        rest.trim()
-                    }
-                    .to_string();
-
-                    let description = lines
-                        .next()
-                        .map(|desc_line| desc_line.trim().to_string())
-                        .unwrap_or_default();
-
-                    let package = Package {
-                        name: package_name.to_string(),
-                        version,
-                        description,
-                        repository: repo_name.to_string(),
-                        arch: "x86_64".to_string(),
-                        size: 0,
-                        installed_size: 0,
-                        dependencies: Vec::new(),
-                        conflicts: Vec::new(),
-                        provides: Vec::new(),
-                        replaces: Vec::new(),
-                        maintainer: "Arch Linux Team".to_string(),
-                        license: "Unknown".to_string(),
-                        url: String::new(),
-                        checksum: String::new(),
-                        signature: None,
-                        build_date: chrono::Utc::now(),
-                        install_date: None,
-                        files: Vec::new(),
-                        scripts: crate::package::PackageScripts {
-                            pre_install: None,
-                            post_install: None,
-                            pre_remove: None,
-                            post_remove: None,
-                            pre_upgrade: None,
-                            post_upgrade: None,
-                        },
-                        compatibility: crate::package::CompatibilityInfo::default(),
-                        health: crate::package::PackageHealth::default(),
-                    };
-                    packages.push(package);
-                }
-            }
-        }
-
-        info!("Found {} packages via pacman search", packages.len());
-        Ok(packages)
-    }
+    // Removed: search_with_pacman - now using native database search only
     pub async fn get_newer_version(&self, package: &Package) -> PackerResult<Option<Package>> {
         if let Some(repo_package) = self.get_package(&package.name).await? {
             use semver::Version;
@@ -2242,6 +2160,16 @@ impl RepositoryManager {
                 "https://aur.archlinux.org/cgit/aur.git/snapshot/{}.tar.gz",
                 package.name
             )),
+            RepositoryType::Arch => {
+                // construct arch package download url: {base_url}/{package_name}-{version}-{arch}.pkg.tar.zst
+                let arch = &package.arch;
+                let url = format!(
+                    "{}/{}-{}-{}.pkg.tar.zst",
+                    repository.url, package.name, package.version, arch
+                );
+                debug!("arch package download url: {}", url);
+                Ok(url)
+            },
             RepositoryType::GitHub => {
                 if package.url.contains("github.com") {
                     Ok(format!(
@@ -2666,3 +2594,4 @@ fn calculate_relevance_score(name: &str, description: &str, query: &str) -> f32 
 
     score.max(0.0)
 }
+

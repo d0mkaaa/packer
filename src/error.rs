@@ -276,6 +276,18 @@ pub enum PackerError {
     /// Rollback failed
     #[error("Rollback failed: {0}")]
     RollbackFailed(String),
+
+    /// Package dependency error
+    #[error("Dependency error: {0}")]
+    DependencyError(String),
+
+    /// Package conflict error
+    #[error("Conflict error: {0}")]
+    ConflictError(String),
+
+    /// Script execution failed
+    #[error("Script failed: {0}")]
+    ScriptFailed(String),
 }
 
 impl From<zip::result::ZipError> for PackerError {

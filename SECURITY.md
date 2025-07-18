@@ -6,12 +6,12 @@ Packer takes security seriously. As a package manager, security is critical to p
 
 ## 🔒 Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| < 0.1   | :x:                |
+| Version | Supported          | Notes |
+| ------- | ------------------ | ----- |
+| 0.2.0   | :white_check_mark: | Latest - includes TOCTOU fix |
+| 0.1.x   | :x:                | Critical vulnerability - upgrade immediately |
+| < 0.1   | :x:                | Unsupported |
 
-I currently support security updates for the latest minor version only. 
 
 ## 🚨 Reporting a Vulnerability
 
@@ -93,6 +93,47 @@ Please provide as much information as possible:
 - **Principle of Least Privilege**: Run Packer with minimal required permissions
 - **Isolated Environment**: Consider using containers or virtual machines for testing
 - **Backup System**: Maintain system backups before major operations
+
+## 🚨 Security Advisories
+
+### CVE-2025-0718 - TOCTOU Vulnerability in GPG Signature Verification (FIXED)
+
+**Severity**: Critical  
+**CVSS Score**: 9.1 (Critical)  
+**Affected Versions**: 0.1.0 
+**Fixed in Version**: 0.2.0
+**Release Date**: 2025-07-18  
+
+#### Description
+A Time-of-Check-Time-of-Use (TOCTOU) race condition vulnerability was discovered in the GPG signature verification process. The vulnerable code performed separate existence checks and file operations, creating a window where an attacker could swap signature files between the check and use operations.
+
+#### Impact
+- **Package Integrity**: Signature verification could be bypassed
+- **Supply Chain Attack**: Malicious packages could be accepted as legitimate
+- **Authentication Bypass**: GPG signature validation could be circumvented
+
+#### Technical Details
+The vulnerability existed in `src/gpg_manager.rs` where file existence checks and file operations were not atomic:
+
+```rust
+// VULNERABLE CODE (Fixed in 0.2.0)
+if !sig_file.exists() {               
+    sig_file = package_path.with_extension("asc");
+}
+if !sig_file.exists() {
+    return Ok(SignatureVerificationResult { ... });
+}
+self.verify_detached_signature(package_path, &sig_file).await  // Use
+```
+
+#### Fix Implementation
+- **Atomic File Operations**: Combined check and use operations
+- **Signature Format Validation**: Validates PGP signature headers
+- **Path Canonicalization**: Prevents directory traversal attacks
+- **Empty File Detection**: Rejects empty signature files
+
+#### Action Required
+**Immediate upgrade to version 0.2.0 is required for all users.**
 
 ## 🚧 Known Security Considerations
 

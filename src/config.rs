@@ -302,7 +302,7 @@ impl Config {
     }
 
     pub fn get_repository(&self, name: &str) -> Option<&RepositoryConfig> {
-        self.repositories.iter().find(|r| r.name == name)
+        self.repositories.iter().find(|repo| repo.name == name)
     }
 
     pub fn get_enabled_repositories(&self) -> Vec<&RepositoryConfig> {
@@ -434,17 +434,63 @@ impl Default for RepositoryConfig {
 }
 
 fn default_repositories() -> Vec<RepositoryConfig> {
-    vec![RepositoryConfig {
+    vec![
+        // official arch repositories
+        RepositoryConfig {
+            name: "core".to_string(),
+            url: "https://geo.mirror.pkgbuild.com/core/os/x86_64".to_string(),
+            enabled: true,
+            priority: 0,
+            repo_type: RepositoryType::Arch,
+            trust_level: TrustLevel::Trusted,
+            mirror_urls: vec![
+                "https://geo.mirror.pkgbuild.com/core/os/x86_64".to_string(),
+                "https://mirror.rackspace.com/archlinux/core/os/x86_64".to_string(),
+            ],
+            arch: Some("x86_64".to_string()),
+            siglevel: Some("Required".to_string()),
+        },
+        RepositoryConfig {
+            name: "extra".to_string(),
+            url: "https://geo.mirror.pkgbuild.com/extra/os/x86_64".to_string(),
+            enabled: true,
+            priority: 1,
+            repo_type: RepositoryType::Arch,
+            trust_level: TrustLevel::Trusted,
+            mirror_urls: vec![
+                "https://geo.mirror.pkgbuild.com/extra/os/x86_64".to_string(),
+                "https://mirror.rackspace.com/archlinux/extra/os/x86_64".to_string(),
+            ],
+            arch: Some("x86_64".to_string()),
+            siglevel: Some("Required".to_string()),
+        },
+        RepositoryConfig {
+            name: "community".to_string(),
+            url: "https://geo.mirror.pkgbuild.com/community/os/x86_64".to_string(),
+            enabled: true,
+            priority: 2,
+            repo_type: RepositoryType::Arch,
+            trust_level: TrustLevel::Trusted,
+            mirror_urls: vec![
+                "https://geo.mirror.pkgbuild.com/community/os/x86_64".to_string(),
+                "https://mirror.rackspace.com/archlinux/community/os/x86_64".to_string(),
+            ],
+            arch: Some("x86_64".to_string()),
+            siglevel: Some("Required".to_string()),
+        },
+        // aur repository
+        RepositoryConfig {
         name: "aur".to_string(),
         url: "https://aur.archlinux.org/".to_string(),
         enabled: true,
-        priority: 1,
+            priority: 10,
         repo_type: RepositoryType::AUR,
         trust_level: TrustLevel::Community,
         mirror_urls: vec!["https://aur.archlinux.org/".to_string()],
         arch: Some("any".to_string()),
         siglevel: Some("Never".to_string()),
-    }]
+        }
+    ]
 }
 
 fn default_install_root() -> PathBuf {

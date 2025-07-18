@@ -215,27 +215,75 @@ impl GPGManager {
         let sig_path = if let Some(sig) = signature_path {
             sig.to_path_buf()
         } else {
-            let mut sig_file = package_path.to_path_buf();
-            sig_file.set_extension("sig");
-            if !sig_file.exists() {
-                sig_file = package_path.with_extension("asc");
+            match self.find_and_validate_signature_file(package_path) {
+                Ok(path) => path,
+                Err(_) => {
+                    return Ok(SignatureVerificationResult {
+                        verified: false,
+                        key_id: None,
+                        key_fingerprint: None,
+                        trust_level: TrustLevel::Unknown,
+                        signature_timestamp: None,
+                        warnings: vec!["No signature file found".to_string()],
+                        errors: vec![],
+                    });
+                }
             }
-            if !sig_file.exists() {
-                return Ok(SignatureVerificationResult {
-                    verified: false,
-                    key_id: None,
-                    key_fingerprint: None,
-                    trust_level: TrustLevel::Unknown,
-                    signature_timestamp: None,
-                    warnings: vec!["No signature file found".to_string()],
-                    errors: vec![],
-                });
-            }
-            sig_file
         };
 
         self.verify_detached_signature(package_path, &sig_path)
             .await
+    }
+
+    fn find_and_validate_signature_file(&self, package_path: &Path) -> PackerResult<PathBuf> {
+        use std::fs::OpenOptions;
+        use std::io::Read;
+        
+        let candidate_paths = vec![
+            package_path.with_extension("sig"),
+            package_path.with_extension("asc"),
+        ];
+        
+        for candidate_path in candidate_paths {
+            match OpenOptions::new()
+                .read(true)
+                .create(false)
+                .open(&candidate_path)
+            {
+                Ok(mut file) => {
+                    let mut buffer = [0u8; 512];
+                    match file.read(&mut buffer) {
+                        Ok(bytes_read) => {
+                            if bytes_read == 0 {
+                                warn!("Empty signature file: {:?}", candidate_path);
+                                continue;
+                            }
+                            
+                            let content = String::from_utf8_lossy(&buffer[..bytes_read]);
+                            
+                            if content.contains("-----BEGIN PGP SIGNATURE-----") ||
+                               buffer.starts_with(&[0x89, 0x02, 0x1C, 0x03]) ||
+                               content.contains("-----BEGIN PGP MESSAGE-----") {
+                                info!("Found valid signature file: {:?}", candidate_path);
+                                return Ok(candidate_path);
+                            } else {
+                                warn!("Invalid signature file format: {:?}", candidate_path);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to read signature file {:?}: {}", candidate_path, e);
+                        }
+                    }
+                }
+                Err(_) => {
+                    continue;
+                }
+            }
+        }
+        
+        Err(PackerError::SecurityError(
+            "No valid signature file found".to_string()
+        ))
     }
 
     async fn verify_detached_signature(
@@ -248,6 +296,26 @@ impl GPGManager {
             file_path, signature_path
         );
 
+        if !file_path.exists() {
+            return Err(PackerError::SecurityError(
+                "Package file does not exist".to_string()
+            ));
+        }
+        
+        if !signature_path.exists() {
+            return Err(PackerError::SecurityError(
+                "Signature file does not exist".to_string()
+            ));
+        }
+
+        let canonical_file_path = file_path.canonicalize().map_err(|e| {
+            PackerError::SecurityError(format!("Invalid file path: {}", e))
+        })?;
+        
+        let canonical_signature_path = signature_path.canonicalize().map_err(|e| {
+            PackerError::SecurityError(format!("Invalid signature path: {}", e))
+        })?;
+
         let mut cmd = Command::new("gpg");
         cmd.env("GNUPGHOME", &self.keyring_path)
             .arg("--batch")
@@ -255,8 +323,8 @@ impl GPGManager {
             .arg("--status-fd")
             .arg("2")
             .arg("--verify")
-            .arg(signature_path)
-            .arg(file_path)
+            .arg(&canonical_signature_path)
+            .arg(&canonical_file_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -388,7 +456,6 @@ impl GPGManager {
                             "Key was automatically imported, consider manual verification"
                                 .to_string(),
                         );
-                        // it marks as partially successful since it imported the key
                         result.key_id = Some(key_info.id);
                         result.trust_level = key_info.trust_level;
                         result.verified = result
@@ -453,7 +520,7 @@ impl GPGManager {
             .stderr(Stdio::piped());
 
         let output = match tokio::time::timeout(
-            std::time::Duration::from_secs(60), // Longer timeout for key import
+            std::time::Duration::from_secs(60),
             cmd.output(),
         )
         .await

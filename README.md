@@ -1,6 +1,6 @@
 # Packer 📦
 
-A modern, fast package manager for Arch Linux written in Rust.
+A modern, **completely independent** package manager for Arch Linux written in Rust.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
@@ -8,14 +8,17 @@ A modern, fast package manager for Arch Linux written in Rust.
 
 ## ✨ Features
 
+- 🚫 **100% Pacman-Free** - No dependency on pacman or sudo required
+- 🏠 **Native Package Format** - Uses custom `.pck` format for user-space installation  
+- 📁 **User-Space Installation** - Installs to `~/.local/usr/` (no root required)
 - 🔍 **Fast Package Search** - Search across AUR and official repositories
-- 📦 **Package Installation** - Install packages from multiple sources
-- 🔄 **Dependency Resolution** - Automatic dependency handling
-- 🛡️ **Security First** - GPG verification and checksum validation
-- ⚡ **Parallel Operations** - Concurrent downloads and installations
-- 🎯 **AUR Support** - Full Arch User Repository integration
+- 📦 **Direct HTTP Downloads** - Downloads packages directly from Arch mirrors
+- 🔄 **Native Dependency Resolution** - Built-in dependency handling
+- 🛡️ **Security First** - Checksum validation and secure extraction
+- ⚡ **Transaction System** - Atomic operations with rollback support
+- 🎯 **Multi-Source Support** - Arch official repositories and AUR
 - 📊 **Progress Tracking** - Real-time progress indicators
-- 🔧 **Configurable** - Flexible TOML-based configuration
+- 🔧 **Desktop Integration** - Proper .desktop file and PATH integration
 - 📁 **Multi-format Support** - Extract tar, zip, bzip2, xz, zstd archives
 
 ## 🚀 Quick Start
@@ -27,14 +30,19 @@ A modern, fast package manager for Arch Linux written in Rust.
 git clone https://github.com/d0mkaaa/packer.git
 cd packer
 cargo build --release
-sudo cp target/release/packer /usr/local/bin/
+# Copy to your local bin directory (no sudo needed!)
+mkdir -p ~/.local/bin
+cp target/release/packer ~/.local/bin/
+# Add to PATH in your shell config (.bashrc, .zshrc, etc.)
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
 #### Prerequisites
-- Arch Linux
-- Rust 1.75+ (for building from source)
-- `makepkg` (for AUR packages)
+- Arch Linux (or any system with access to Arch package repositories)
+- Rust 1.88+ (for building from source)
 - `git` (for AUR packages)
+- No sudo or pacman required!
 
 ### Basic Usage
 
@@ -42,11 +50,11 @@ sudo cp target/release/packer /usr/local/bin/
 # Search for packages
 packer search firefox
 
-# Install a package
-packer install neofetch
+# Install a package (installs to ~/.local/usr/)
+packer install curl
 
-# Remove a package
-packer remove package-name
+# Remove a package  
+packer remove curl
 
 # Update package database
 packer update
@@ -54,26 +62,26 @@ packer update
 # Show package information
 packer info firefox
 
-# List repositories
-packer repos
+# List installed packages
+packer list
 
 # Show help
 packer --help
 ```
+
+**Note:** All packages are installed to `~/.local/usr/` and integrated with your desktop environment. Binaries are automatically added to PATH via `~/.local/usr/bin`.
 
 ## 📋 Commands
 
 | Command | Description | Example |
 |---------|-------------|---------|
 | `search <query>` | Search for packages | `packer search vim` |
-| `install <package>` | Install a package | `packer install git` |
+| `install <package>` | Install a package to ~/.local/usr/ | `packer install git` |
 | `remove <package>` | Remove a package | `packer remove vim` |
 | `update` | Update package database | `packer update` |
 | `upgrade` | Upgrade all packages | `packer upgrade` |
 | `info <package>` | Show package information | `packer info firefox` |
 | `list` | List installed packages | `packer list` |
-| `repos` | List configured repositories | `packer repos` |
-| `clean` | Clean package cache | `packer clean` |
 
 ## ⚙️ Configuration
 
@@ -89,9 +97,9 @@ parallel_downloads = 4
 auto_confirm = false
 check_signatures = true
 cache_dir = "~/.cache/packer"
+install_root = "~/.local/usr"  # User-space installation directory
 
 [security]
-gpg_verify = true
 checksum_verify = true
 max_package_size = "1GB"
 ```
@@ -100,8 +108,8 @@ max_package_size = "1GB"
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   CLI Interface │───▶│  Package Manager│───▶│  Repository     │
-│                 │    │                 │    │  Manager        │
+│   CLI Interface │───▶│  Native Package │───▶│  Repository     │
+│                 │    │  Manager        │    │  Manager        │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                                 │                        │
                                 ▼                        ▼
@@ -112,20 +120,32 @@ max_package_size = "1GB"
                                 │                        │
                                 ▼                        ▼
                        ┌─────────────────┐    ┌─────────────────┐
-                       │  Storage        │    │  Database       │
-                       │  Manager        │    │  Manager        │
+                       │  Native Storage │    │  Local Database │
+                       │  Manager        │    │  (.pck format)  │
                        └─────────────────┘    └─────────────────┘
 ```
+
+## 🔄 How It Works
+
+Packer operates completely independently from the system package manager:
+
+1. **Download**: Fetches packages directly from Arch mirrors via HTTP
+2. **Extract**: Safely extracts package contents with path validation  
+3. **Convert**: Converts to native `.pck` format with metadata
+4. **Install**: Places files in `~/.local/usr/` with proper permissions
+5. **Integrate**: Sets up PATH, desktop files, and environment
+
+No pacman, no sudo, no system dependencies - just pure user-space package management!
 
 ## 🛡️ Security
 
 Packer prioritizes security with multiple verification layers:
 
-- **GPG Signature Verification** - Validates package authenticity
-- **Checksum Validation** - Ensures package integrity
-- **Secure Downloads** - Uses HTTPS with certificate validation
-- **Safe Extraction** - Prevents path traversal attacks
-- **Input Sanitization** - Validates all user inputs
+- **Checksum Validation** - Ensures package integrity using official checksums
+- **Secure Downloads** - Uses HTTPS with certificate validation  
+- **Safe Extraction** - Prevents path traversal attacks during extraction
+- **User-Space Isolation** - All operations in user directory, no system modification
+- **Input Sanitization** - Validates all user inputs and package data
 
 ## 🔧 Development
 
@@ -135,11 +155,14 @@ Packer prioritizes security with multiple verification layers:
 # Debug build
 cargo build
 
-# Release build
+# Release build  
 cargo build --release
 
 # Run tests
 cargo test
+
+# Check for issues
+cargo check
 
 # Generate documentation
 cargo doc --open
@@ -151,33 +174,32 @@ cargo doc --open
 # Run all tests
 cargo test
 
-# Run specific test
-cargo test search
-
-# Run with output
-cargo test -- --nocapture
-```
-
-### Features
-
-Packer supports feature flags for different build configurations:
-
-```bash
-# Build with all features (default)
-cargo build --features git
-
-# Minimal build
-cargo build --features minimal
+# Test basic functionality
+./target/release/packer search firefox
+./target/release/packer install curl
+./target/release/packer list
+./target/release/packer remove curl
 ```
 
 ## 📊 Performance
 
-Packer is designed for performance:
+Packer is designed for performance and independence:
 
-- **Parallel Downloads** - Concurrent package downloads
-- **Efficient Caching** - Smart cache management
+- **No Sudo Overhead** - No privilege escalation required
+- **Direct Downloads** - Bypasses system package manager bottlenecks
+- **Efficient Caching** - Smart cache management in user space
 - **Memory Efficient** - Streaming operations for large files
-- **Fast Search** - Optimized package database queries
+- **Fast Search** - Direct repository API integration
+- **Parallel Operations** - Concurrent downloads and processing
+
+## 🎯 Use Cases
+
+Perfect for:
+- **Non-root users** who want to install software
+- **Development environments** where you can't modify the system
+- **Containers** and isolated environments
+- **Testing packages** without affecting the system
+- **Portable installations** that travel with your user account
 
 ## 🤝 Contributing
 
@@ -204,18 +226,22 @@ Found a bug? Please report it on our [Issues page](https://github.com/d0mkaaa/pa
 
 ## 📈 Roadmap
 
+- [x] Complete pacman independence
+- [x] Native package format  
+- [x] User-space installation
+- [x] Desktop integration
 - [ ] GUI interface
 - [ ] Multi-distro support (Debian, Fedora)
 - [ ] Plugin system
 - [ ] Advanced dependency resolution
-- [ ] Package signing tools
-- [ ] Integration with system package managers
+- [ ] Package creation tools
 
 ## 💬 Support
 
 - 🐛 [Bug Reports](https://github.com/d0mkaaa/packer/issues)
 - 💡 [Feature Requests](https://github.com/d0mkaaa/packer/issues)
+- 📚 [Documentation](https://github.com/d0mkaaa/packer/wiki)
 
 ---
 
-**Made with ❤️ in Rust** 
+**Made with ❤️ in Rust - Completely Pacman-Free!** 🦀 

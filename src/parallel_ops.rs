@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::JoinHandle;
 
-/// Advanced parallel operations manager
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ParallelOperationsManager {
     config: Config,
     download_semaphore: Arc<Semaphore>,
@@ -21,7 +21,6 @@ pub struct ParallelOperationsManager {
     active_operations: Arc<RwLock<HashMap<String, OperationContext>>>,
 }
 
-/// Intelligent task scheduler with priority and dependency management
 #[derive(Debug, Clone)]
 pub struct TaskScheduler {
     pub priority_queues: HashMap<TaskPriority, VecDeque<ParallelTask>>,
@@ -32,7 +31,6 @@ pub struct TaskScheduler {
     pub adaptive_scheduling: bool,
 }
 
-/// System resource monitoring and optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceMonitor {
     pub cpu_usage: f64,
@@ -47,7 +45,6 @@ pub struct ResourceMonitor {
     pub thermal_throttling: bool,
 }
 
-/// Performance metrics and optimization data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceMetrics {
     pub operations_completed: u64,
@@ -61,7 +58,6 @@ pub struct PerformanceMetrics {
     pub optimization_suggestions: Vec<OptimizationSuggestion>,
 }
 
-/// Individual parallel task with intelligent prioritization
 #[derive(Debug, Clone)]
 pub struct ParallelTask {
     pub task_id: String,
@@ -78,7 +74,6 @@ pub struct ParallelTask {
     pub progress_callback: Option<String>,
 }
 
-/// Context for active operations
 #[derive(Debug, Clone)]
 pub struct OperationContext {
     pub operation_id: String,
@@ -558,9 +553,6 @@ impl ParallelOperationsManager {
         Ok(())
     }
 
-    // Helper methods and implementations will be added here later on
-    // For simplicity, I'll provide stub implementations
-
     fn clone_refs(&self) -> ParallelOperationsManagerRef {
         ParallelOperationsManagerRef {
             resource_monitor: Arc::clone(&self.resource_monitor),
@@ -607,7 +599,6 @@ impl ParallelOperationsManager {
     }
 
     async fn release_task_resources(&self, _task: &ParallelTask) {
-        // Resources are automatically released when permits are dropped
     }
 
     async fn execute_download_task(&self, task: &ParallelTask) -> TaskResult {
@@ -679,7 +670,6 @@ impl ParallelOperationsManager {
     }
 }
 
-// Helper struct for cloning references
 #[derive(Debug, Clone)]
 struct ParallelOperationsManagerRef {
     resource_monitor: Arc<RwLock<ResourceMonitor>>,

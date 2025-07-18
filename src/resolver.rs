@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DependencyResolver {
     graph: DependencyGraph,
     package_cache: Arc<RwLock<HashMap<String, Vec<Package>>>>,
@@ -24,6 +25,7 @@ pub struct DependencyResolver {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ConflictResolver {
     resolution_strategies: Vec<ResolutionStrategy>,
     backtrack_limit: usize,
@@ -31,6 +33,7 @@ pub struct ConflictResolver {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct MultiObjectiveOptimizer {
     objectives: Vec<OptimizationObjective>,
     weights: HashMap<OptimizationGoal, f64>,
@@ -38,6 +41,7 @@ pub struct MultiObjectiveOptimizer {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Solution {
     packages: Vec<Package>,
     score: f64,
@@ -46,6 +50,7 @@ pub struct Solution {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TradeOff {
     objective1: OptimizationGoal,
     objective2: OptimizationGoal,
@@ -54,6 +59,7 @@ pub struct TradeOff {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct OptimizationObjective {
     goal: OptimizationGoal,
     weight: f64,
@@ -61,6 +67,7 @@ pub struct OptimizationObjective {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ResolutionStrategy {
     BacktrackSearch,
     ConstraintPropagation,
@@ -71,6 +78,7 @@ pub enum ResolutionStrategy {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ConflictHeuristics {
     use_version_ranges: bool,
     prefer_optional_dependencies: bool,
@@ -424,7 +432,7 @@ impl DependencyResolver {
             }
         }
         let search_results = repository_manager
-            .search_packages(&dependency.name, false)
+                            .search_packages(&dependency.name, false, Some(5))
             .await?;
         for package in search_results {
             if self.dependency_matches(&package, dependency)
@@ -1142,7 +1150,6 @@ impl DependencyResolver {
         (total_packages, total_edges)
     }
 
-    /// Advanced conflict resolution
     pub async fn resolve_conflicts_intelligently(
         &mut self,
         packages: &[Package],
@@ -1209,7 +1216,6 @@ impl DependencyResolver {
         Ok(suggestions)
     }
 
-    /// Backtracking-based conflict resolution
     async fn backtrack_conflict_resolution(
         &self,
         conflicts: &ConflictCheckResult,
@@ -1309,7 +1315,6 @@ impl DependencyResolver {
         Ok(compatible_versions)
     }
 
-    /// Constraint propagation resolution
     async fn constraint_propagation_resolution(
         &self,
         conflicts: &ConflictCheckResult,
@@ -1341,7 +1346,6 @@ impl DependencyResolver {
         Ok(suggestions)
     }
 
-    /// Local search resolution
     async fn local_search_resolution(
         &self,
         conflicts: &ConflictCheckResult,
@@ -1371,7 +1375,6 @@ impl DependencyResolver {
         Ok(suggestions)
     }
 
-    /// Hybrid resolution combining multiple strategies
     async fn hybrid_resolution(
         &self,
         conflicts: &ConflictCheckResult,

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct PackageExtractor {
     supported_formats: HashMap<String, ExtractionMethod>,
+    #[allow(dead_code)] // Future feature: temporary directory management
     temp_dir: PathBuf,
     security_settings: SecuritySettings,
 }

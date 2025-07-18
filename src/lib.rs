@@ -1,7 +1,11 @@
 pub mod config;
+pub mod core;
 pub mod dependency;
 pub mod error;
+pub mod fast_resolver;
 pub mod gpg_manager;
+pub mod native_db;
+pub mod native_format;
 pub mod package;
 pub mod parallel_ops;
 pub mod repository;
@@ -11,7 +15,11 @@ pub mod storage;
 pub mod utils;
 
 pub use config::Config;
+pub use core::{CorePackageManager, CorePackage, SourceType, InstallStatus};
 pub use error::{PackerError, PackerResult};
+pub use fast_resolver::{FastDependencyResolver, ResolutionResult};
+pub use native_db::{NativePackageDatabase, DatabaseStats};
+pub use native_format::{NativePackage, NativePackageManager, PackageFormat, PackageMetadata};
 pub use package::PackageManager;
 
 pub const PACKER_VERSION: &str = "0.1.0";

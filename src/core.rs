@@ -1305,7 +1305,6 @@ impl CorePackageManager {
 
     // dynamically scan for package files instead of hardcoded lists
     async fn add_known_package_files(&self, package_name: &str, install_root: &std::path::Path, files: &mut Vec<crate::native_format::PackageFile>) -> PackerResult<()> {
-        use crate::native_format::{PackageFile, FileType};
         
         // scan common directories where packages typically install files - standard unix layout
         let common_dirs = vec![
@@ -1333,51 +1332,53 @@ impl CorePackageManager {
     }
     
     // scan directory for files that might belong to this package
-    async fn scan_directory_for_package(&self, package_name: &str, search_dir: &std::path::Path, install_root: &std::path::Path, files: &mut Vec<crate::native_format::PackageFile>) -> PackerResult<()> {
-        use crate::native_format::{PackageFile, FileType};
-        
-        let mut entries = tokio::fs::read_dir(search_dir).await?;
-        
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            let filename = entry.file_name().to_string_lossy().to_lowercase();
+    fn scan_directory_for_package<'a>(&'a self, package_name: &'a str, search_dir: &'a std::path::Path, install_root: &'a std::path::Path, files: &'a mut Vec<crate::native_format::PackageFile>) -> std::pin::Pin<Box<dyn std::future::Future<Output = PackerResult<()>> + 'a>> {
+        Box::pin(async move {
+            use crate::native_format::{PackageFile, FileType};
             
-            // check if this file is related to our package - simple name matching
-            if filename.contains(&package_name.to_lowercase()) ||
-               filename.starts_with(&package_name.to_lowercase()) ||
-               filename.ends_with(&package_name.to_lowercase()) {
-                   
-                let metadata = entry.metadata().await?;
-                let relative_path = path.strip_prefix(install_root).unwrap_or(&path);
+            let mut entries = tokio::fs::read_dir(search_dir).await?;
+            
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                let filename = entry.file_name().to_string_lossy().to_lowercase();
                 
-                let file = PackageFile {
-                    source: path.to_string_lossy().to_string(),
-                    target: format!("/{}", relative_path.to_string_lossy()),
-                    permissions: if metadata.is_dir() { 0o755 } else { 0o644 },
-                    owner: std::env::var("USER").unwrap_or_else(|_| "user".to_string()),
-                    group: std::env::var("USER").unwrap_or_else(|_| "user".to_string()),
-                    file_type: if metadata.is_dir() {
-                        FileType::Directory
-                    } else if metadata.file_type().is_symlink() {
-                        let link_target = tokio::fs::read_link(&path).await
-                            .unwrap_or_else(|_| std::path::PathBuf::from(""))
-                            .to_string_lossy().to_string();
-                        FileType::Symlink(link_target)
-                    } else {
-                        FileType::Regular
-                    },
-                    checksum: "".to_string(),
-                };
-                files.push(file);
-                
-                // if it's a directory, recursively scan it - gotta check everything
-                if metadata.is_dir() {
-                    self.scan_directory_for_package(package_name, &path, install_root, files).await?;
+                // check if this file is related to our package - simple name matching
+                if filename.contains(&package_name.to_lowercase()) ||
+                   filename.starts_with(&package_name.to_lowercase()) ||
+                   filename.ends_with(&package_name.to_lowercase()) {
+                       
+                    let metadata = entry.metadata().await?;
+                    let relative_path = path.strip_prefix(install_root).unwrap_or(&path);
+                    
+                    let file = PackageFile {
+                        source: path.to_string_lossy().to_string(),
+                        target: format!("/{}", relative_path.to_string_lossy()),
+                        permissions: if metadata.is_dir() { 0o755 } else { 0o644 },
+                        owner: std::env::var("USER").unwrap_or_else(|_| "user".to_string()),
+                        group: std::env::var("USER").unwrap_or_else(|_| "user".to_string()),
+                        file_type: if metadata.is_dir() {
+                            FileType::Directory
+                        } else if metadata.file_type().is_symlink() {
+                            let link_target = tokio::fs::read_link(&path).await
+                                .unwrap_or_else(|_| std::path::PathBuf::from(""))
+                                .to_string_lossy().to_string();
+                            FileType::Symlink(link_target)
+                        } else {
+                            FileType::Regular
+                        },
+                        checksum: "".to_string(),
+                    };
+                    files.push(file);
+                    
+                    // if it's a directory, recursively scan it - gotta check everything
+                    if metadata.is_dir() {
+                        self.scan_directory_for_package(package_name, &path, install_root, files).await?;
+                    }
                 }
             }
-        }
-        
-        Ok(())
+            
+            Ok(())
+        })
     }
     
     async fn scan_wildcard_pattern(&self, base_dir: &std::path::Path, pattern: &str, files: &mut Vec<crate::native_format::PackageFile>) -> PackerResult<()> {

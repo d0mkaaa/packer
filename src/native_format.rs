@@ -620,7 +620,7 @@ impl PackageFormat {
         }
         
         let mut file = std::fs::File::open(file_path)
-            .map_err(|e| crate::error::PackerError::IoError(format!("failed to open file for checksum: {}", e)))?;
+            .map_err(|e| crate::error::PackerError::Io(e))?;
         
         let mut hasher = Sha256::new();
         let mut buffer = [0; 8192];
@@ -629,7 +629,7 @@ impl PackageFormat {
             match file.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(n) => hasher.update(&buffer[..n]),
-                Err(e) => return Err(crate::error::PackerError::IoError(format!("failed to read file: {}", e))),
+                Err(e) => return Err(crate::error::PackerError::Io(e)),
             }
         }
         

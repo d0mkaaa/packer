@@ -361,7 +361,7 @@ impl NativePackageDatabase {
     }
     
     // fallback category-based search - more targeted and efficient
-    async fn sync_aur_by_categories(&self, client: &reqwest::Client) -> PackerResult<usize> {
+    async fn sync_aur_by_categories(&mut self, client: &reqwest::Client) -> PackerResult<usize> {
         let mut packages_added = 0;
         
         // curated list of actually useful software categories

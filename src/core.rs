@@ -1614,7 +1614,6 @@ impl CorePackageManager {
         })
     }
 
-
     async fn convert_core_to_native_package(
         &self,
         package: &CorePackage,

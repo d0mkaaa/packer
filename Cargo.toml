@@ -84,11 +84,8 @@ fuzzy-matcher = "0.3"
 console = "0.15.11"
 dialoguer = "0.11"
 similar = "2.4"
-git2 = { version = "0.18.3", optional = true, default-features = false, features = ["https"] }
-
 [features]
-default = ["git"]
-git = ["git2"]
+default = []
 minimal = []
 
 [profile.release]

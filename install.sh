@@ -48,7 +48,7 @@ check_rust_version() {
     print_status "Checking Rust version..."
     
     RUST_VERSION=$(rustc --version | awk '{print $2}' | cut -d'.' -f1,2)
-    REQUIRED_VERSION="1.75"
+    REQUIRED_VERSION="1.88"
     
     if ! awk "BEGIN {exit !($RUST_VERSION >= $REQUIRED_VERSION)}"; then
         print_error "Rust $REQUIRED_VERSION or higher is required. Current version: $RUST_VERSION"

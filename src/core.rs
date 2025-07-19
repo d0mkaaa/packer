@@ -2,10 +2,11 @@ use crate::{
     config::Config,
     error::{PackerError, PackerResult},
     fast_resolver::FastDependencyResolver,
+    mirrors::MirrorManager,
     native_db::NativePackageDatabase,
 };
 use chrono::{DateTime, Utc};
-use log::{info, warn};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -191,6 +192,7 @@ pub struct CorePackageManager {
     database: PackageDatabase,
     native_db: NativePackageDatabase,
     resolver: FastDependencyResolver,
+    mirror_manager: MirrorManager,
     transactions: Vec<InstallTransaction>,
     transaction_log_path: PathBuf,
 }
@@ -203,6 +205,9 @@ impl CorePackageManager {
         let mut native_db = NativePackageDatabase::new(config.cache_dir.clone());
         native_db.initialize().await?;
 
+        let mut mirror_manager = MirrorManager::new(config.mirror_config.clone());
+        mirror_manager.initialize().await?;
+
         let transaction_log_path = config.cache_dir.join("transactions.json");
 
         Ok(Self {
@@ -210,6 +215,7 @@ impl CorePackageManager {
             database,
             native_db,
             resolver: FastDependencyResolver::new(),
+            mirror_manager,
             transactions: Vec::new(),
             transaction_log_path,
         })
@@ -225,8 +231,7 @@ impl CorePackageManager {
             );
         }
 
-        let mut results: Vec<CorePackage> =
-            self.native_db.search(query).into_iter().cloned().collect();
+        let mut results: Vec<CorePackage> = self.native_db.search(query);
 
         info!("Found {} results in native database", results.len());
 
@@ -304,6 +309,7 @@ impl CorePackageManager {
         let mut packages = Vec::new();
 
         if let Some(results) = json["results"].as_array() {
+            // process results sequentially but more efficiently
             let mut parsed_packages: Vec<(CorePackage, f64)> = Vec::new();
 
             for result in results {
@@ -761,7 +767,7 @@ impl CorePackageManager {
     }
 
     async fn download_package_for_conversion(
-        &self,
+        &mut self,
         package: &CorePackage,
         temp_dir: &std::path::Path,
     ) -> PackerResult<Vec<std::path::PathBuf>> {
@@ -779,29 +785,39 @@ impl CorePackageManager {
     }
 
     async fn download_official_package(
-        &self,
+        &mut self,
         package: &CorePackage,
         temp_dir: &std::path::Path,
     ) -> PackerResult<Vec<std::path::PathBuf>> {
         let repo_name = &package.repository;
-        let mirrors = match repo_name.as_str() {
-            "core" => vec![
-                "https://geo.mirror.pkgbuild.com/core/os/x86_64".to_string(),
-                "https://mirror.rackspace.com/archlinux/core/os/x86_64".to_string(),
-            ],
-            "extra" => vec![
-                "https://geo.mirror.pkgbuild.com/extra/os/x86_64".to_string(),
-                "https://mirror.rackspace.com/archlinux/extra/os/x86_64".to_string(),
-            ],
-            "community" => vec![
-                "https://geo.mirror.pkgbuild.com/community/os/x86_64".to_string(),
-                "https://mirror.rackspace.com/archlinux/community/os/x86_64".to_string(),
-            ],
-            _ => vec![format!(
-                "https://geo.mirror.pkgbuild.com/{}/os/x86_64",
-                repo_name
-            )],
-        };
+
+        // get best mirrors for this repo
+        let mirrors = self
+            .mirror_manager
+            .get_best_mirrors(&format!("{}/os/x86_64", repo_name))
+            .await
+            .unwrap_or_else(|_| {
+                // fallback to hardcoded mirrors if mirror manager fails
+                warn!("Failed to get mirrors from mirror manager, using fallback");
+                match repo_name.as_str() {
+                    "core" => vec![
+                        "https://geo.mirror.pkgbuild.com/core/os/x86_64".to_string(),
+                        "https://mirror.rackspace.com/archlinux/core/os/x86_64".to_string(),
+                    ],
+                    "extra" => vec![
+                        "https://geo.mirror.pkgbuild.com/extra/os/x86_64".to_string(),
+                        "https://mirror.rackspace.com/archlinux/extra/os/x86_64".to_string(),
+                    ],
+                    "community" => vec![
+                        "https://geo.mirror.pkgbuild.com/community/os/x86_64".to_string(),
+                        "https://mirror.rackspace.com/archlinux/community/os/x86_64".to_string(),
+                    ],
+                    _ => vec![format!(
+                        "https://geo.mirror.pkgbuild.com/{}/os/x86_64",
+                        repo_name
+                    )],
+                }
+            });
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -818,34 +834,88 @@ impl CorePackageManager {
         let extensions = vec!["pkg.tar.zst", "pkg.tar.xz"];
 
         let mut download_path = None;
+        let mut last_error = None;
 
-        for mirror_url in &mirrors {
+        // try each mirror until we find one that works
+        for (mirror_idx, mirror_url) in mirrors.iter().enumerate() {
+            info!(
+                "Trying mirror {}/{}: {}",
+                mirror_idx + 1,
+                mirrors.len(),
+                mirror_url
+            );
+
             for arch in &architectures {
                 for ext in &extensions {
                     let package_filename = format!("{}-{}-{}.{}", package.name, version, arch, ext);
                     let download_url = format!("{}/{}", mirror_url, package_filename);
 
-                    info!("Trying to download from: {}", download_url);
+                    debug!("Attempting download from: {}", download_url);
 
                     match client.head(&download_url).send().await {
                         Ok(response) if response.status().is_success() => {
                             let package_file = temp_dir.join(&package_filename);
 
-                            let download_response = client.get(&download_url).send().await?;
-                            if download_response.status().is_success() {
-                                let bytes = download_response.bytes().await?;
-                                tokio::fs::write(&package_file, &bytes).await?;
+                            match client.get(&download_url).send().await {
+                                Ok(download_response)
+                                    if download_response.status().is_success() =>
+                                {
+                                    match download_response.bytes().await {
+                                        Ok(bytes) => {
+                                            if let Err(e) =
+                                                tokio::fs::write(&package_file, &bytes).await
+                                            {
+                                                warn!("Failed to write downloaded file: {}", e);
+                                                last_error = Some(e.to_string());
+                                                continue;
+                                            }
 
-                                info!(
-                                    "Successfully downloaded {} ({} bytes)",
-                                    package.name,
-                                    bytes.len()
-                                );
-                                download_path = Some(package_file);
-                                break;
+                                            info!(
+                                                "Successfully downloaded {} from {} ({} bytes)",
+                                                package.name,
+                                                mirror_url,
+                                                bytes.len()
+                                            );
+                                            download_path = Some(package_file);
+                                            break;
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "Failed to read response bytes from {}: {}",
+                                                mirror_url, e
+                                            );
+                                            last_error = Some(e.to_string());
+                                        }
+                                    }
+                                }
+                                Ok(response) => {
+                                    warn!(
+                                        "Download failed with status {} from {}",
+                                        response.status(),
+                                        mirror_url
+                                    );
+                                    last_error = Some(format!("HTTP {}", response.status()));
+                                }
+                                Err(e) => {
+                                    warn!("Request failed to {}: {}", mirror_url, e);
+                                    last_error = Some(e.to_string());
+                                }
                             }
                         }
-                        _ => continue,
+                        Ok(response) => {
+                            debug!(
+                                "Package not found at {} (HTTP {})",
+                                download_url,
+                                response.status()
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to check package availability at {}: {}",
+                                mirror_url, e
+                            );
+                            last_error = Some(e.to_string());
+                        }
                     }
                 }
                 if download_path.is_some() {
@@ -858,10 +928,21 @@ impl CorePackageManager {
         }
 
         let package_file = download_path.ok_or_else(|| {
-            PackerError::DownloadFailed(format!(
-                "Could not download package {} from any mirror",
-                package.name
-            ))
+            let error_msg = if let Some(last_err) = last_error {
+                format!(
+                    "Could not download package {} from any of {} mirrors. Last error: {}",
+                    package.name,
+                    mirrors.len(),
+                    last_err
+                )
+            } else {
+                format!(
+                    "Could not download package {} from any of {} mirrors",
+                    package.name,
+                    mirrors.len()
+                )
+            };
+            PackerError::DownloadFailed(error_msg)
         })?;
 
         let extract_dir = temp_dir.join("extracted");
@@ -1533,94 +1614,6 @@ impl CorePackageManager {
         })
     }
 
-    async fn scan_wildcard_pattern(
-        &self,
-        base_dir: &std::path::Path,
-        pattern: &str,
-        files: &mut Vec<crate::native_format::PackageFile>,
-    ) -> PackerResult<()> {
-        if pattern.contains('*') {
-            let parts: Vec<&str> = pattern.split('*').collect();
-            if parts.len() == 2 {
-                let prefix = parts[0];
-                let suffix = parts[1];
-
-                let search_dir = base_dir
-                    .join(prefix)
-                    .parent()
-                    .unwrap_or(base_dir)
-                    .to_path_buf();
-                if search_dir.exists() {
-                    self.scan_directory_with_pattern(&search_dir, base_dir, prefix, suffix, files)
-                        .await?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn scan_directory_with_pattern(
-        &self,
-        search_dir: &std::path::Path,
-        base_dir: &std::path::Path,
-        prefix: &str,
-        suffix: &str,
-        files: &mut Vec<crate::native_format::PackageFile>,
-    ) -> PackerResult<()> {
-        use crate::native_format::{FileType, PackageFile};
-
-        let mut entries = match tokio::fs::read_dir(search_dir).await {
-            Ok(entries) => entries,
-            Err(_) => return Ok(()),
-        };
-
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            let path_str = path.to_string_lossy();
-
-            if path_str.contains(prefix.trim_end_matches('/')) && path_str.ends_with(suffix) {
-                let metadata = match entry.metadata().await {
-                    Ok(metadata) => metadata,
-                    Err(_) => continue,
-                };
-
-                let relative_path = match path.strip_prefix(base_dir) {
-                    Ok(rel) => rel,
-                    Err(_) => continue,
-                };
-
-                let file = PackageFile {
-                    source: path.to_string_lossy().to_string(),
-                    target: format!("/{}", relative_path.to_string_lossy()),
-                    permissions: if metadata.is_dir() { 0o755 } else { 0o644 },
-                    owner: std::env::var("USER").unwrap_or_else(|_| "user".to_string()),
-                    group: std::env::var("USER").unwrap_or_else(|_| "user".to_string()),
-                    file_type: if metadata.is_dir() {
-                        FileType::Directory
-                    } else if metadata.file_type().is_symlink() {
-                        let link_target = tokio::fs::read_link(&path)
-                            .await
-                            .unwrap_or_else(|_| std::path::PathBuf::from(""))
-                            .to_string_lossy()
-                            .to_string();
-                        FileType::Symlink(link_target)
-                    } else {
-                        FileType::Regular
-                    },
-                    checksum: "".to_string(),
-                };
-                files.push(file);
-            }
-
-            if path.is_dir() {
-                Box::pin(self.scan_directory_with_pattern(&path, base_dir, prefix, suffix, files))
-                    .await?;
-            }
-        }
-
-        Ok(())
-    }
 
     async fn convert_core_to_native_package(
         &self,
@@ -1933,5 +1926,40 @@ impl CorePackageManager {
         }
 
         Ok(files_removed)
+    }
+
+    // mirror management methods
+    pub async fn get_mirrors_for_repo(&mut self, repo: &str) -> PackerResult<Vec<String>> {
+        self.mirror_manager.get_best_mirrors(repo).await
+    }
+
+    pub async fn test_mirror_speeds(
+        &mut self,
+        repo: &str,
+    ) -> PackerResult<Vec<crate::mirrors::MirrorTestResult>> {
+        let mirrors = self.mirror_manager.get_best_mirrors(repo).await?;
+        let mut results = Vec::new();
+
+        for mirror_url in mirrors {
+            let base_url = mirror_url.trim_end_matches(&format!("/{}", repo));
+            match self.mirror_manager.test_mirror_speed(base_url).await {
+                Ok(result) => results.push(result),
+                Err(e) => warn!("Failed to test mirror {}: {}", base_url, e),
+            }
+        }
+
+        Ok(results)
+    }
+
+    pub async fn rank_mirrors(&mut self) -> PackerResult<()> {
+        self.mirror_manager.rank_mirrors().await
+    }
+
+    pub fn get_mirror_stats(&self) -> crate::mirrors::MirrorStats {
+        self.mirror_manager.get_mirror_stats()
+    }
+
+    pub async fn update_mirrors(&mut self) -> PackerResult<()> {
+        self.mirror_manager.initialize().await
     }
 }

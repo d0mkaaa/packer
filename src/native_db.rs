@@ -7,7 +7,47 @@ use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::fs;
+
+#[derive(Debug)]
+pub struct SearchCache {
+    cache: HashMap<String, Vec<CorePackage>>,
+    cache_ttl: Duration,
+    last_updated: HashMap<String, DateTime<Utc>>,
+}
+
+impl SearchCache {
+    fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+            cache_ttl: Duration::from_secs(300), // 5 min cache
+            last_updated: HashMap::new(),
+        }
+    }
+
+    fn get(&self, query: &str) -> Option<&Vec<CorePackage>> {
+        if let Some(last_update) = self.last_updated.get(query) {
+            let now = Utc::now();
+            if now.signed_duration_since(*last_update).num_seconds()
+                < self.cache_ttl.as_secs() as i64
+            {
+                return self.cache.get(query);
+            }
+        }
+        None
+    }
+
+    fn insert(&mut self, query: String, results: Vec<CorePackage>) {
+        self.cache.insert(query.clone(), results);
+        self.last_updated.insert(query, Utc::now());
+    }
+
+    fn clear(&mut self) {
+        self.cache.clear();
+        self.last_updated.clear();
+    }
+}
 
 #[derive(Debug)]
 pub struct NativePackageDatabase {
@@ -17,6 +57,7 @@ pub struct NativePackageDatabase {
     aur_db: PackageRepository,
     last_sync: Option<DateTime<Utc>>,
     sync_interval: chrono::Duration,
+    search_cache: SearchCache,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +105,7 @@ impl NativePackageDatabase {
             aur_db: PackageRepository::new("aur".to_string()),
             last_sync: None,
             sync_interval: chrono::Duration::hours(6),
+            search_cache: SearchCache::new(),
         }
     }
 
@@ -84,15 +126,26 @@ impl NativePackageDatabase {
         Ok(())
     }
 
-    pub fn search(&self, query: &str) -> Vec<&CorePackage> {
+    pub fn search(&mut self, query: &str) -> Vec<CorePackage> {
         let query_lower = query.to_lowercase();
+
+        // check cache first - way faster for repeated searches
+        if let Some(cached_results) = self.search_cache.get(&query_lower) {
+            debug!("Cache hit for search query: {}", query);
+            return cached_results.clone();
+        }
+
+        debug!(
+            "Cache miss for search query: {}, performing full search",
+            query
+        );
         let mut results = Vec::new();
 
         for package in self.official_db.packages.values() {
             if package.name.to_lowercase().contains(&query_lower)
                 || package.description.to_lowercase().contains(&query_lower)
             {
-                results.push(package);
+                results.push(package.clone());
             }
         }
 
@@ -100,7 +153,7 @@ impl NativePackageDatabase {
             if package.name.to_lowercase().contains(&query_lower)
                 || package.description.to_lowercase().contains(&query_lower)
             {
-                results.push(package);
+                results.push(package.clone());
             }
         }
 
@@ -123,6 +176,9 @@ impl NativePackageDatabase {
                 }
             }
         });
+
+        // cache the results for next time
+        self.search_cache.insert(query_lower, results.clone());
 
         results
     }
@@ -160,6 +216,8 @@ impl NativePackageDatabase {
             }
         }
 
+        // clear search cache since we added new packages
+        self.search_cache.clear();
         self.save_to_disk().await?;
         Ok(())
     }
@@ -185,8 +243,12 @@ impl NativePackageDatabase {
 
     pub async fn bulk_add_packages(&mut self, packages: Vec<CorePackage>) -> PackerResult<()> {
         for package in packages {
-            self.add_package(package).await?;
+            self.add_package_no_save(package);
         }
+        // clear search cache since we added new packages
+        self.search_cache.clear();
+        // save once at the end instead of for each package
+        self.save_to_disk().await?;
         Ok(())
     }
 
@@ -580,12 +642,24 @@ impl NativePackageDatabase {
                     }
                     "CSIZE" => {
                         if i < lines.len() {
-                            package.download_size = lines[i].trim().parse().unwrap_or(0);
+                            package.download_size = lines[i]
+                                .trim()
+                                .parse()
+                                .map_err(|e| {
+                                    warn!("Failed to parse CSIZE for {}: {}", package.name, e)
+                                })
+                                .unwrap_or(0);
                         }
                     }
                     "ISIZE" => {
                         if i < lines.len() {
-                            package.installed_size = lines[i].trim().parse().unwrap_or(0);
+                            package.installed_size = lines[i]
+                                .trim()
+                                .parse()
+                                .map_err(|e| {
+                                    warn!("Failed to parse ISIZE for {}: {}", package.name, e)
+                                })
+                                .unwrap_or(0);
                         }
                     }
                     "URL" => {

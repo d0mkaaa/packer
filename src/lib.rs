@@ -1,9 +1,11 @@
+pub mod compression;
 pub mod config;
 pub mod core;
 pub mod dependency;
 pub mod error;
 pub mod fast_resolver;
 pub mod gpg_manager;
+pub mod mirrors;
 pub mod native_db;
 pub mod native_format;
 pub mod package;
@@ -14,15 +16,17 @@ pub mod security_enhancements;
 pub mod storage;
 pub mod utils;
 
+pub use compression::{CompressionFormat, CompressionManager, DeltaManager, PackageDelta};
 pub use config::Config;
 pub use core::{CorePackage, CorePackageManager, InstallStatus, SourceType};
 pub use error::{PackerError, PackerResult};
 pub use fast_resolver::{FastDependencyResolver, ResolutionResult};
+pub use mirrors::{Mirror, MirrorConfig, MirrorManager, MirrorStats};
 pub use native_db::{DatabaseStats, NativePackageDatabase};
 pub use native_format::{NativePackage, NativePackageManager, PackageFormat, PackageMetadata};
 pub use package::PackageManager;
 
-pub const PACKER_VERSION: &str = "0.1.0";
+pub const PACKER_VERSION: &str = "0.2.1";
 
 use lazy_static::lazy_static;
 use std::path::PathBuf;

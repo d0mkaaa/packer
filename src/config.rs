@@ -48,6 +48,9 @@ pub struct Config {
     #[serde(default = "default_retry_delay_seconds")]
     pub retry_delay_seconds: u64,
 
+    #[serde(default)]
+    pub mirror_config: crate::mirrors::MirrorConfig,
+
     #[serde(default = "default_http_proxy")]
     pub http_proxy: Option<String>,
 
@@ -381,6 +384,7 @@ impl Default for Config {
             trusted_maintainers: Vec::new(),
             blocked_packages: Vec::new(),
             gpg_config: GPGConfig::default(),
+            mirror_config: crate::mirrors::MirrorConfig::default(),
         }
     }
 }

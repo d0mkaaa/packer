@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-07-19
+
+### Major Features
+- **🪞 Comprehensive Mirror System**: Complete mirror management with automatic discovery, ranking, and fallback support
+- **⚡ Smart Mirror Selection**: Automatic selection of fastest mirrors based on location, speed, and reliability
+- **🌍 Global Mirror Support**: Built-in support for worldwide Arch Linux mirrors with country preferences
+- **🔄 Automatic Fallback**: Intelligent fallback to backup mirrors when primary mirrors fail during downloads
+
+### Mirror Management CLI
+- **`packer mirrors list [repo]`**: List available mirrors for any repository
+- **`packer mirrors test [repo]`**: Test mirror speeds and availability with detailed results
+- **`packer mirrors rank`**: Rank all mirrors by performance metrics
+- **`packer mirrors stats`**: Show comprehensive mirror statistics and health data
+- **`packer mirrors update`**: Update mirror list from official Arch Linux sources
+
+### Performance Improvements
+- **Search Caching**: Added intelligent search result caching with 5-minute TTL for dramatically faster repeated searches
+- **Bulk Operations**: Optimized `bulk_add_packages` to batch database saves, reducing I/O operations by up to 90%
+- **Database Efficiency**: Eliminated redundant disk writes during package batch processing
+- **Memory Optimization**: Improved memory usage patterns in search and package processing
+- **Download Reliability**: Multi-mirror support significantly improves download success rates
+
+### Mirror System Features
+- **Automatic Mirror Discovery**: Fetches latest mirror list from official Arch Linux sources
+- **Performance Scoring**: Advanced scoring algorithm considering response time, location, and SSL support
+- **Configurable Preferences**: Country-based preferences, protocol selection (HTTPS/HTTP), and custom mirrors
+- **Health Monitoring**: Continuous monitoring of mirror availability and performance
+- **Load Balancing**: Distributes requests across multiple mirrors to prevent overload
+
+### Added
+- **Compression Framework**: New compression module supporting gzip, xz, zstd formats for better package handling
+- **Delta Updates**: Package delta support for efficient updates, reducing bandwidth usage
+- **Smart Compression**: Automatic compression format selection based on file size and speed requirements
+- **Enhanced Error Logging**: Better error reporting with context for package parsing failures
+- **Mirror Configuration**: Comprehensive mirror settings in config files
+- **Parallel Mirror Testing**: Concurrent speed testing with configurable limits
+
+### Fixed
+- **Async Processing**: Resolved compilation issues with parallel AUR package processing
+- **Search Interface**: Fixed search function to return owned data for better cache integration
+- **Error Handling**: Replaced silent error swallowing with proper logging and error propagation
+- **Cache Invalidation**: Automatic cache clearing when packages are added or synced
+- **Mirror Borrowing Issues**: Fixed Rust borrowing conflicts in mirror ranking system
+- **Download Resilience**: Package downloads now automatically retry failed mirrors
+
+### Technical Improvements
+- **Reduced Database I/O**: Bulk operations now save once instead of per-package
+- **Cache Hit Rate**: Search cache provides near-instant results for repeated queries
+- **Better Diagnostics**: Enhanced error messages with package-specific context
+- **Code Quality**: Improved error handling patterns throughout the codebase
+- **Mirror Architecture**: Clean separation of mirror management, testing, and selection logic
+- **Concurrent Operations**: Safe parallel mirror testing with semaphore-based rate limiting
+
+### Reliability Enhancements
+- **Multi-Mirror Downloads**: Each package download attempts multiple mirrors automatically
+- **Graceful Degradation**: System continues working even when some mirrors are unavailable
+- **Built-in Fallbacks**: Hardcoded reliable mirrors ensure system always functions
+- **Network Resilience**: Robust handling of network timeouts and connection failures
+
 ## [0.2.0] - 2025-07-18
 
 ### Security

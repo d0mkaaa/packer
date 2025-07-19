@@ -55,7 +55,7 @@ async fn main() {
 
 fn build_cli() -> Command {
     Command::new("packer")
-        .version("0.1.0")
+        .version("0.2.1")
         .about("Packer is a simplified, fast package manager with native dependency resolution and intelligent package handling.")
         .arg(Arg::new("verbose")
             .short('v')
@@ -105,6 +105,24 @@ fn build_cli() -> Command {
             .alias("u"))
         .subcommand(Command::new("upgrade")
             .about("Upgrade all packages"))
+        .subcommand(Command::new("mirrors")
+            .about("Mirror management commands")
+            .subcommand(Command::new("list")
+                .about("List available mirrors")
+                .arg(Arg::new("repo")
+                    .help("Repository to list mirrors for")
+                    .value_name("REPO")))
+            .subcommand(Command::new("test")
+                .about("Test mirror speeds")
+                .arg(Arg::new("repo")
+                    .help("Repository to test mirrors for")
+                    .value_name("REPO")))
+            .subcommand(Command::new("rank")
+                .about("Rank all mirrors by performance"))
+            .subcommand(Command::new("stats")
+                .about("Show mirror statistics"))
+            .subcommand(Command::new("update")
+                .about("Update mirror list from official sources")))
 }
 
 async fn run_command(matches: ArgMatches) -> packer::PackerResult<()> {
@@ -383,6 +401,127 @@ async fn run_command(matches: ArgMatches) -> packer::PackerResult<()> {
                 }
             }
         }
+
+        Some(("mirrors", sub_matches)) => match sub_matches.subcommand() {
+            Some(("list", list_matches)) => {
+                let repo = list_matches
+                    .get_one::<String>("repo")
+                    .map(|s| s.as_str())
+                    .unwrap_or("core");
+
+                println!(
+                    "{}",
+                    format!("🪞 Available mirrors for {}:", repo).cyan().bold()
+                );
+                println!("{}", "=".repeat(60));
+
+                let mirrors = package_manager.get_mirrors_for_repo(repo).await?;
+
+                if mirrors.is_empty() {
+                    println!("{}", "No mirrors available for this repository.".yellow());
+                } else {
+                    for (i, mirror) in mirrors.iter().enumerate() {
+                        println!("{}. {}", i + 1, mirror.blue());
+                    }
+                    println!("\nTotal: {} mirrors", mirrors.len());
+                }
+            }
+
+            Some(("test", test_matches)) => {
+                let repo = test_matches
+                    .get_one::<String>("repo")
+                    .map(|s| s.as_str())
+                    .unwrap_or("core");
+
+                println!(
+                    "{}",
+                    format!("⚡ Testing mirror speeds for {}...", repo).cyan()
+                );
+                let results = package_manager.test_mirror_speeds(repo).await?;
+
+                println!("\n{}", "Mirror Speed Test Results:".bold());
+                println!("{}", "=".repeat(80));
+
+                for (i, result) in results.iter().enumerate() {
+                    let status = if result.success { "✅" } else { "❌" };
+                    let time_str = format!("{}ms", result.response_time.as_millis());
+
+                    println!(
+                        "{} {}. {} - {}",
+                        status,
+                        i + 1,
+                        result.mirror_url.blue(),
+                        if result.success {
+                            time_str.green()
+                        } else {
+                            "failed".red()
+                        }
+                    );
+
+                    if let Some(error) = &result.error_message {
+                        println!("     Error: {}", error.dimmed());
+                    }
+                }
+            }
+
+            Some(("rank", _)) => {
+                println!("{}", "🏆 Ranking mirrors by performance...".cyan());
+                package_manager.rank_mirrors().await?;
+                println!("{}", "✅ Mirror ranking completed!".green());
+
+                let stats = package_manager.get_mirror_stats();
+                println!("\n{}", "Mirror Statistics:".bold());
+                println!("Total mirrors: {}", stats.total_mirrors);
+                println!("Active mirrors: {}", stats.active_mirrors);
+                println!("Tested mirrors: {}", stats.tested_mirrors);
+                println!(
+                    "Average response time: {}ms",
+                    stats.avg_response_time.as_millis()
+                );
+            }
+
+            Some(("stats", _)) => {
+                println!("{}", "📊 Mirror Statistics:".cyan().bold());
+                println!("{}", "=".repeat(40));
+
+                let stats = package_manager.get_mirror_stats();
+                println!("Total mirrors: {}", stats.total_mirrors.to_string().bold());
+                println!(
+                    "Active mirrors: {}",
+                    stats.active_mirrors.to_string().green()
+                );
+                println!(
+                    "Tested mirrors: {}",
+                    stats.tested_mirrors.to_string().blue()
+                );
+                println!(
+                    "Average response time: {}ms",
+                    stats.avg_response_time.as_millis().to_string().cyan()
+                );
+
+                if let Some(last_update) = stats.last_update {
+                    println!(
+                        "Last mirror update: {}",
+                        last_update
+                            .format("%Y-%m-%d %H:%M:%S UTC")
+                            .to_string()
+                            .dimmed()
+                    );
+                }
+            }
+
+            Some(("update", _)) => {
+                println!("{}", "🔄 Updating mirror list...".cyan());
+                package_manager.update_mirrors().await?;
+                println!("{}", "✅ Mirror list updated successfully!".green());
+            }
+
+            _ => {
+                println!(
+                    "❌ Invalid mirror command. Use 'packer mirrors --help' for usage information."
+                );
+            }
+        },
 
         _ => {
             println!("❌ Invalid command. Use --help for usage information.");

@@ -652,7 +652,7 @@ impl RepositoryManager {
         let mut variables = std::collections::HashMap::new();
         let mut in_source_array = false;
         let mut current_source = String::new();
-        let mut current_array_name = String::new();
+        let mut _current_array_name = String::new(); // used for debugging
         for line in pkgbuild_content.lines() {
             let line = line.trim();
             if let Some(eq_pos) = line.find('=') {
@@ -675,8 +675,8 @@ impl RepositoryManager {
             if line.starts_with("source") && line.contains("=(") {
                 in_source_array = true;
                 if let Some(eq_pos) = line.find('=') {
-                    current_array_name = line[..eq_pos].trim().to_string();
-                    debug!("Found source array: {}", current_array_name);
+                    _current_array_name = line[..eq_pos].trim().to_string();
+                    debug!("Found source array: {}", _current_array_name);
                 }
                 let after_paren = line.split("=(").nth(1).unwrap_or("");
                 current_source = after_paren.to_string();

@@ -8,7 +8,7 @@ Before setting up Packer, ensure you have:
 
 ### Required
 - **Arch Linux** (current target platform)
-- **Rust 1.75+** - Install from [rustup.rs](https://rustup.rs/)
+- **Rust 1.88+** - Install from [rustup.rs](https://rustup.rs/)
 - **Git** - For cloning and version control
 - **makepkg** - For building AUR packages (usually pre-installed on Arch)
 

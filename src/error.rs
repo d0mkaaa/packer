@@ -288,6 +288,10 @@ pub enum PackerError {
     /// Script execution failed
     #[error("Script failed: {0}")]
     ScriptFailed(String),
+
+    /// Compression/decompression error
+    #[error("Compression error: {0}")]
+    CompressionError(String),
 }
 
 impl From<zip::result::ZipError> for PackerError {

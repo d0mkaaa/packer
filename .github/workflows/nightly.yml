@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'  # Run at 2 AM UTC daily
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,34 +50,11 @@ jobs:
         echo "SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
         echo "DATE=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
         
-    - name: Check if nightly release exists
-      id: check_release
-      uses: actions/github-script@v7
-      with:
-        script: |
-          try {
-            const { data: release } = await github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: 'nightly'
-            });
-            return { exists: true, id: release.id, upload_url: release.upload_url };
-          } catch (error) {
-            if (error.status === 404) {
-              return { exists: false };
-            }
-            throw error;
-          }
-          
-    - name: Create nightly release
-      if: steps.check_release.outputs.exists == 'false'
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
       with:
         tag_name: nightly
-        release_name: Nightly Build
+        name: Nightly Build
         body: |
           🌙 **Nightly Build** - Built from latest main branch
           
@@ -85,56 +64,8 @@ jobs:
           **Date**: ${{ steps.commit.outputs.DATE }}
           
           For stable releases, see [releases page](https://github.com/d0mkaaa/packer/releases).
-        draft: false
+        files: artifacts/packer-nightly-linux-x86_64.tar.gz
         prerelease: true
-        
-    - name: Update nightly release
-      if: steps.check_release.outputs.exists == 'true'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          await github.rest.repos.updateRelease({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: ${{ fromJson(steps.check_release.outputs.result).id }},
-            body: `🌙 **Nightly Build** - Built from latest main branch
-            
-          **⚠️ Warning**: This is a development build and may be unstable.
-          
-          **Commit**: ${{ steps.commit.outputs.SHA }}
-          **Date**: ${{ steps.commit.outputs.DATE }}
-          
-          For stable releases, see [releases page](https://github.com/d0mkaaa/packer/releases).`
-          });
-          
-    - name: Delete existing nightly assets
-      if: steps.check_release.outputs.exists == 'true'
-      uses: actions/github-script@v7
-      continue-on-error: true
-      with:
-        script: |
-          const { data: assets } = await github.rest.repos.listReleaseAssets({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            release_id: ${{ fromJson(steps.check_release.outputs.result).id }}
-          });
-          
-          for (const asset of assets) {
-            if (asset.name.includes('nightly')) {
-              await github.rest.repos.deleteReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                asset_id: asset.id
-              });
-            }
-          }
-          
-    - name: Upload nightly asset
-      uses: actions/upload-release-asset@v1
+        generate_release_notes: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.check_release.outputs.exists == 'true' && fromJson(steps.check_release.outputs.result).upload_url || steps.create_release.outputs.upload_url }}
-        asset_path: artifacts/packer-nightly-linux-x86_64.tar.gz
-        asset_name: packer-nightly-linux-x86_64.tar.gz
-        asset_content_type: application/gzip

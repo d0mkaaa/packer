@@ -36,6 +36,8 @@ jobs:
         
     - name: Build release
       run: cargo build --release --verbose
+      env:
+        CARGO_NET_GIT_FETCH_WITH_CLI: true
       
     - name: Prepare artifacts
       run: |

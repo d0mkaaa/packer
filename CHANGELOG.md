@@ -54,7 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Error Messages**: More descriptive error messages for missing packages and resolution failures  
 - **User Experience**: Cleaner output with emoji indicators and colored text
 - **Code Quality**: Removed dead code warnings and improved maintainability
-- **Documentation**: Casual, friendly comments throughout the codebase
 
 ## [0.2.1] - 2025-07-19
 

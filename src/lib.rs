@@ -19,11 +19,14 @@ pub use compression::{CompressionFormat, CompressionManager, DeltaManager, Packa
 pub use config::Config;
 pub use core::{CorePackage, CorePackageManager, InstallStatus, SourceType};
 pub use error::{PackerError, PackerResult};
-pub use resolver::{DependencyResolver, FastDependencyResolver, DynamicPackageResolver, ResolutionResult, FastResolutionResult, Conflict, ConflictReason, ConflictSeverity};
 pub use mirrors::{Mirror, MirrorConfig, MirrorManager, MirrorStats};
 pub use native_db::{DatabaseStats, NativePackageDatabase};
 pub use native_format::{NativePackage, NativePackageManager, PackageFormat, PackageMetadata};
 pub use package::PackageManager;
+pub use resolver::{
+    Conflict, ConflictReason, ConflictSeverity, DependencyResolver, DynamicPackageResolver,
+    FastDependencyResolver, FastResolutionResult, ResolutionResult,
+};
 
 pub const PACKER_VERSION: &str = "0.2.2";
 

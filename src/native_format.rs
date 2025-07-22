@@ -90,7 +90,7 @@ impl NativePackageManager {
         Ok(Self {
             install_root,
             installed_packages: HashMap::new(),
-            system_manager: SystemManager { 
+            system_manager: SystemManager {
                 dry_run: false,
                 services_to_reload: std::collections::HashSet::new(),
                 services_to_enable: std::collections::HashSet::new(),
@@ -98,11 +98,14 @@ impl NativePackageManager {
         })
     }
 
-    pub fn new_with_packages(install_root: PathBuf, installed_packages: HashMap<String, NativePackage>) -> PackerResult<Self> {
+    pub fn new_with_packages(
+        install_root: PathBuf,
+        installed_packages: HashMap<String, NativePackage>,
+    ) -> PackerResult<Self> {
         Ok(Self {
             install_root,
             installed_packages,
-            system_manager: SystemManager { 
+            system_manager: SystemManager {
                 dry_run: false,
                 services_to_reload: std::collections::HashSet::new(),
                 services_to_enable: std::collections::HashSet::new(),
@@ -124,7 +127,10 @@ impl NativePackageManager {
         for file in &package.files {
             if let Err(e) = self.install_file(file).await {
                 // For maximum compatibility, treat file installation errors as warnings
-                println!("⚠️  Failed to install file {}: {} (continuing anyway)", file.target, e);
+                println!(
+                    "⚠️  Failed to install file {}: {} (continuing anyway)",
+                    file.target, e
+                );
             }
         }
 
@@ -185,11 +191,12 @@ impl NativePackageManager {
         for dep in dependencies {
             if !dep.optional && !self.is_dependency_satisfied(dep)? {
                 // For system packages and libraries, assume they're available
-                if self.is_system_package(&dep.name) || self.is_likely_system_dependency(&dep.name) {
+                if self.is_system_package(&dep.name) || self.is_likely_system_dependency(&dep.name)
+                {
                     println!("✅ System dependency assumed available: {}", dep.name);
                     continue;
                 }
-                
+
                 return Err(crate::error::PackerError::DependencyError(format!(
                     "Missing dependency: {} {}",
                     dep.name,
@@ -216,7 +223,10 @@ impl NativePackageManager {
         let target_path = self.install_root.join(&file.target.trim_start_matches('/'));
 
         // Check if this is a system file that we should skip if it already exists
-        if self.should_skip_existing_file(&file.target, &target_path).await? {
+        if self
+            .should_skip_existing_file(&file.target, &target_path)
+            .await?
+        {
             println!("⏭️  Skipping system file (already exists): {}", file.target);
             return Ok(());
         }
@@ -357,10 +367,15 @@ impl NativePackageManager {
                                     );
                                 }
                             }
-                            
+
                             // Special handling for binary files in /bin directories
                             if file.target.contains("/bin/") {
-                                self.install_binary_with_wrapper(source_path, &target_path, &file.target).await?;
+                                self.install_binary_with_wrapper(
+                                    source_path,
+                                    &target_path,
+                                    &file.target,
+                                )
+                                .await?;
                             } else {
                                 // Remove existing file if it exists before copying
                                 if target_path.exists() {
@@ -372,11 +387,14 @@ impl NativePackageManager {
                                         );
                                     }
                                 }
-                                
+
                                 if let Err(e) = fs::copy(source_path, &target_path).await {
                                     // For lib32 packages, be more permissive with file copy errors
                                     if e.kind() == std::io::ErrorKind::AlreadyExists {
-                                        println!("⚠️  Skipping existing file: {}", target_path.display());
+                                        println!(
+                                            "⚠️  Skipping existing file: {}",
+                                            target_path.display()
+                                        );
                                     } else {
                                         return Err(crate::error::PackerError::Io(e));
                                     }
@@ -594,13 +612,21 @@ impl NativePackageManager {
         Ok(())
     }
 
-    async fn install_binary_with_wrapper(&self, source_path: &std::path::Path, target_path: &std::path::Path, _target_file: &str) -> PackerResult<()> {
+    async fn install_binary_with_wrapper(
+        &self,
+        source_path: &std::path::Path,
+        target_path: &std::path::Path,
+        _target_file: &str,
+    ) -> PackerResult<()> {
         // First, copy the actual binary to a hidden location
         let binary_name = target_path.file_name().unwrap().to_str().unwrap();
-        let actual_binary_path = target_path.parent().unwrap().join(format!(".{}-actual", binary_name));
-        
+        let actual_binary_path = target_path
+            .parent()
+            .unwrap()
+            .join(format!(".{}-actual", binary_name));
+
         fs::copy(source_path, &actual_binary_path).await?;
-        
+
         // Make the actual binary executable
         #[cfg(unix)]
         {
@@ -609,7 +635,7 @@ impl NativePackageManager {
             perms.set_mode(0o755);
             fs::set_permissions(&actual_binary_path, perms).await?;
         }
-        
+
         // Create a wrapper script that sets up the environment
         let lib_path = self.install_root.join("usr/lib");
         let wrapper_content = format!(
@@ -631,9 +657,9 @@ exec "{}" "$@"
             self.install_root.join("usr/lib/pkgconfig").display(),
             actual_binary_path.display()
         );
-        
+
         fs::write(target_path, wrapper_content).await?;
-        
+
         // Make the wrapper script executable
         #[cfg(unix)]
         {
@@ -642,37 +668,42 @@ exec "{}" "$@"
             perms.set_mode(0o755);
             fs::set_permissions(target_path, perms).await?;
         }
-        
+
         println!("✅ Created wrapper script for binary: {}", binary_name);
         Ok(())
     }
 
-    async fn should_skip_existing_file(&self, target_file: &str, target_path: &std::path::Path) -> PackerResult<bool> {
+    async fn should_skip_existing_file(
+        &self,
+        target_file: &str,
+        target_path: &std::path::Path,
+    ) -> PackerResult<bool> {
         // If file doesn't exist, we can install it
         if !target_path.exists() {
             return Ok(false);
         }
 
         // Skip system-critical files that are likely managed by the system
-        if target_file.contains("/etc/") || 
-           target_file.contains("/usr/lib/systemd/") ||
-           target_file.contains("/usr/share/dbus-1/") ||
-           target_file.contains("/lib/systemd/") ||
-           target_file.contains("/var/") ||
-           target_file.contains(".wants") ||
-           target_file.contains(".requires") {
+        if target_file.contains("/etc/")
+            || target_file.contains("/usr/lib/systemd/")
+            || target_file.contains("/usr/share/dbus-1/")
+            || target_file.contains("/lib/systemd/")
+            || target_file.contains("/var/")
+            || target_file.contains(".wants")
+            || target_file.contains(".requires")
+        {
             return Ok(true);
         }
 
         // For dbus specifically, skip if it's a system socket or config file
-        if target_file.contains("dbus") && (
-            target_file.contains("/etc/") ||
-            target_file.contains("/var/") ||
-            target_file.contains("/run/") ||
-            target_file.contains("/tmp/") ||
-            target_file.contains("system.d") ||
-            target_file.contains("session.d")
-        ) {
+        if target_file.contains("dbus")
+            && (target_file.contains("/etc/")
+                || target_file.contains("/var/")
+                || target_file.contains("/run/")
+                || target_file.contains("/tmp/")
+                || target_file.contains("system.d")
+                || target_file.contains("session.d"))
+        {
             return Ok(true);
         }
 
@@ -683,22 +714,41 @@ exec "{}" "$@"
     async fn create_desktop_integration(&self, package: &NativePackage) -> PackerResult<()> {
         // Create desktop entries for known GUI applications
         let gui_apps = vec![
-            ("obs-studio", "OBS Studio", "Live streaming and recording software", "multimedia-video-player"),
-            ("obs", "OBS Studio", "Live streaming and recording software", "multimedia-video-player"),
+            (
+                "obs-studio",
+                "OBS Studio",
+                "Live streaming and recording software",
+                "multimedia-video-player",
+            ),
+            (
+                "obs",
+                "OBS Studio",
+                "Live streaming and recording software",
+                "multimedia-video-player",
+            ),
         ];
 
         for (bin_name, display_name, description, icon) in gui_apps {
             if package.metadata.name == bin_name || package.metadata.name == "obs-studio" {
-                self.create_desktop_file(bin_name, display_name, description, icon).await?;
+                self.create_desktop_file(bin_name, display_name, description, icon)
+                    .await?;
             }
         }
 
         Ok(())
     }
 
-    async fn create_desktop_file(&self, bin_name: &str, display_name: &str, description: &str, icon: &str) -> PackerResult<()> {
+    async fn create_desktop_file(
+        &self,
+        bin_name: &str,
+        display_name: &str,
+        description: &str,
+        icon: &str,
+    ) -> PackerResult<()> {
         let desktop_dir = dirs::home_dir()
-            .ok_or_else(|| crate::error::PackerError::ConfigError("Could not find home directory".to_string()))?
+            .ok_or_else(|| {
+                crate::error::PackerError::ConfigError("Could not find home directory".to_string())
+            })?
             .join(".local/share/applications");
 
         if let Err(e) = fs::create_dir_all(&desktop_dir).await {
@@ -728,7 +778,7 @@ StartupNotify=true
         );
 
         fs::write(&desktop_file_path, desktop_content).await?;
-        
+
         // Make the desktop file executable
         #[cfg(unix)]
         {
@@ -739,18 +789,18 @@ StartupNotify=true
         }
 
         println!("✅ Created desktop entry: {}", desktop_file_path.display());
-        
+
         // Update desktop database to make application appear in menus
         if let Err(e) = tokio::process::Command::new("update-desktop-database")
             .arg(desktop_dir)
             .output()
-            .await 
+            .await
         {
             println!("⚠️  Could not update desktop database: {}", e);
         } else {
             println!("✅ Updated application menu");
         }
-        
+
         Ok(())
     }
 
@@ -762,20 +812,20 @@ StartupNotify=true
             }
             return Ok(true);
         }
-        
+
         // Check if the dependency is satisfied by system packages
         // This is a simple check - just assume common system packages are available
         if self.is_system_package(&dependency.name) {
             return Ok(true);
         }
-        
+
         Ok(false)
     }
-    
+
     fn is_system_package(&self, name: &str) -> bool {
         // List of essential system packages that should be considered always available
         // Check both package names and common library file names
-        matches!(name, 
+        matches!(name,
             "glibc" | "gcc-libs" | "bash" | "sh" | "coreutils" | "util-linux" | 
             "systemd" | "systemd-libs" | "dbus" | "readline" | "ncurses" | 
             "zlib" | "openssl" | "libssl" | "libcrypto" | "expat" | "libffi" |
@@ -838,7 +888,7 @@ StartupNotify=true
             "exiv2" | "brotli" |
             // Web browser dependencies
             "mime-types" | "ttf-font" | "mailcap"
-        ) || 
+        ) ||
         // Also handle .so library files directly
         name.starts_with("lib") && (name.ends_with(".so") || name.contains(".so.")) ||
         // Handle versioned .so files like "libasound.so=2-64"
@@ -848,35 +898,73 @@ StartupNotify=true
     fn is_likely_system_dependency(&self, name: &str) -> bool {
         // Additional system dependencies that should be assumed available
         let critical_deps = [
-            "libgexiv2", "gexiv2", "slang", "jasper", "libmypaint", "pacman",
-            "libmypaint<2", "libmypaint>=1", "libmypaint>1", 
-            "libunwind", "libraw", "poppler", "poppler=25.07.0",
-            "mypaint-brushes1", "luajit", "python-gobject", "openexr", "openjpeg2",
+            "libgexiv2",
+            "gexiv2",
+            "slang",
+            "jasper",
+            "libmypaint",
+            "pacman",
+            "libmypaint<2",
+            "libmypaint>=1",
+            "libmypaint>1",
+            "libunwind",
+            "libraw",
+            "poppler",
+            "poppler=25.07.0",
+            "mypaint-brushes1",
+            "luajit",
+            "python-gobject",
+            "openexr",
+            "openjpeg2",
             // Steam dependencies
-            "ttf-font", "vulkan-driver", "lib32-harfbuzz", "diffutils", "wayland",
-            "lib32-libpipewire=1:1.4.6-1", "alsa-plugins=1:1.2.12", "lib32-glibc>=2.27",
-            // Blender dependencies  
+            "ttf-font",
+            "vulkan-driver",
+            "lib32-harfbuzz",
+            "diffutils",
+            "wayland",
+            "lib32-libpipewire=1:1.4.6-1",
+            "alsa-plugins=1:1.2.12",
+            "lib32-glibc>=2.27",
+            // Blender dependencies
             "intel-tbb",
             // Krita and other app dependencies
-            "fftw", "kcoreaddons5", "freeglut", "glu", "lm_sensors", "kwidgetsaddons5",
-            "fribidi", "glew", "kwindowsystem5", "kconfig5", "imath",
-            "qt5-base", "qt5-declarative", "qt5-x11extras", "qt5-wayland",
-            "libelf", "libglvnd", "libxshmfence", "libxxf86vm", "llvm-libs",
-            "zlib-ng", "libegl", "libebur128"
+            "fftw",
+            "kcoreaddons5",
+            "freeglut",
+            "glu",
+            "lm_sensors",
+            "kwidgetsaddons5",
+            "fribidi",
+            "glew",
+            "kwindowsystem5",
+            "kconfig5",
+            "imath",
+            "qt5-base",
+            "qt5-declarative",
+            "qt5-x11extras",
+            "qt5-wayland",
+            "libelf",
+            "libglvnd",
+            "libxshmfence",
+            "libxxf86vm",
+            "llvm-libs",
+            "zlib-ng",
+            "libegl",
+            "libebur128",
         ];
-        
+
         if critical_deps.contains(&name) {
             return true;
         }
-        
+
         // Handle version constraints
         if name.contains('<') || name.contains('>') || name.contains('=') {
             let base_name = name.split(&['<', '>', '='][..]).next().unwrap_or(name);
             return self.is_system_package(base_name) || critical_deps.contains(&base_name);
         }
-        
+
         // Ultra-liberal approach: assume almost ALL dependencies are available
-        true  // Just assume everything is available - let the install process handle the details
+        true // Just assume everything is available - let the install process handle the details
     }
 
     fn version_satisfies(&self, installed_version: &str, constraint: &str) -> bool {
@@ -908,15 +996,18 @@ impl SystemManager {
 
     pub async fn reload_all_services(&mut self) -> PackerResult<()> {
         if !self.services_to_reload.is_empty() && !self.dry_run {
-            println!("🔄 Reloading systemd daemon for {} services...", self.services_to_reload.len());
-            
+            println!(
+                "🔄 Reloading systemd daemon for {} services...",
+                self.services_to_reload.len()
+            );
+
             Command::new("systemctl")
                 .arg("daemon-reload")
                 .output()
                 .await?;
 
             println!("✅ Systemd daemon reloaded for all services");
-            
+
             // Clear the collected services
             self.services_to_reload.clear();
         }

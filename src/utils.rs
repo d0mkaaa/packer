@@ -667,57 +667,66 @@ pub fn run_command_with_output(cmd: &str, args: &[&str]) -> PackerResult<String>
 }
 pub fn get_disk_usage(path: &Path) -> PackerResult<(u64, u64)> {
     use std::process::Command;
-    
+
     // just gonna use df to see disk space like a normal person
     let output = Command::new("df")
         .arg("-B1") // get exact bytes instead of weird units
         .arg(path)
         .output()
         .map_err(|e| PackerError::Io(e))?;
-    
+
     if !output.status.success() {
-        return Err(PackerError::SystemIntegrationError("Failed to get disk usage".to_string()));
+        return Err(PackerError::SystemIntegrationError(
+            "Failed to get disk usage".to_string(),
+        ));
     }
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
-    
+
     if lines.len() < 2 {
-        return Err(PackerError::SystemIntegrationError("Invalid df output".to_string()));
+        return Err(PackerError::SystemIntegrationError(
+            "Invalid df output".to_string(),
+        ));
     }
-    
+
     // skip the first line cuz it's just headers and stuff
     let fields: Vec<&str> = lines[1].split_whitespace().collect();
     if fields.len() < 4 {
-        return Err(PackerError::SystemIntegrationError("Invalid df output format".to_string()));
+        return Err(PackerError::SystemIntegrationError(
+            "Invalid df output format".to_string(),
+        ));
     }
-    
-    let _total: u64 = fields[1].parse()
-        .map_err(|_| PackerError::SystemIntegrationError("Failed to parse total space".to_string()))?;
-    let used: u64 = fields[2].parse()
-        .map_err(|_| PackerError::SystemIntegrationError("Failed to parse used space".to_string()))?;
-    let available: u64 = fields[3].parse()
-        .map_err(|_| PackerError::SystemIntegrationError("Failed to parse available space".to_string()))?;
-    
+
+    let _total: u64 = fields[1].parse().map_err(|_| {
+        PackerError::SystemIntegrationError("Failed to parse total space".to_string())
+    })?;
+    let used: u64 = fields[2].parse().map_err(|_| {
+        PackerError::SystemIntegrationError("Failed to parse used space".to_string())
+    })?;
+    let available: u64 = fields[3].parse().map_err(|_| {
+        PackerError::SystemIntegrationError("Failed to parse available space".to_string())
+    })?;
+
     Ok((used, available))
 }
 
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     const THRESHOLD: u64 = 1024;
-    
+
     if bytes == 0 {
         return "0 B".to_string();
     }
-    
+
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= THRESHOLD as f64 && unit_index < UNITS.len() - 1 {
         size /= THRESHOLD as f64;
         unit_index += 1;
     }
-    
+
     if unit_index == 0 {
         format!("{} {}", bytes, UNITS[0])
     } else {
@@ -727,33 +736,28 @@ pub fn format_bytes(bytes: u64) -> String {
 
 pub fn calculate_directory_size(path: &Path) -> PackerResult<u64> {
     let mut total_size = 0u64;
-    
+
     if !path.exists() {
         return Ok(0);
     }
-    
+
     if path.is_file() {
-        return Ok(path.metadata()
-            .map_err(|e| PackerError::Io(e))?
-            .len());
+        return Ok(path.metadata().map_err(|e| PackerError::Io(e))?.len());
     }
-    
-    let entries = std::fs::read_dir(path)
-        .map_err(|e| PackerError::Io(e))?;
-    
+
+    let entries = std::fs::read_dir(path).map_err(|e| PackerError::Io(e))?;
+
     for entry in entries {
         let entry = entry.map_err(|e| PackerError::Io(e))?;
         let path = entry.path();
-        
+
         if path.is_dir() {
             total_size += calculate_directory_size(&path)?;
         } else {
-            total_size += entry.metadata()
-                .map_err(|e| PackerError::Io(e))?
-                .len();
+            total_size += entry.metadata().map_err(|e| PackerError::Io(e))?.len();
         }
     }
-    
+
     Ok(total_size)
 }
 

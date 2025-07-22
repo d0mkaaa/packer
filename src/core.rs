@@ -1,9 +1,9 @@
 use crate::{
     config::Config,
     error::{PackerError, PackerResult},
-    resolver::FastDependencyResolver,
     mirrors::MirrorManager,
     native_db::NativePackageDatabase,
+    resolver::FastDependencyResolver,
 };
 use chrono::{DateTime, Utc};
 use log::{debug, info, warn};
@@ -74,21 +74,21 @@ impl PackageDatabase {
                 self.available = data.available;
             }
         }
-        
+
         // Pacman import removed - packer is now completely independent
         info!("Packer running in standalone mode (no pacman dependency)");
-        
+
         // Save the combined data
         if let Err(e) = self.save().await {
             warn!("Failed to save combined package database: {}", e);
         }
-        
+
         info!(
             "Loaded {} installed and {} available packages",
             self.installed.len(),
             self.available.len()
         );
-        
+
         Ok(())
     }
 
@@ -125,31 +125,31 @@ impl PackageDatabase {
     #[allow(dead_code)]
     async fn import_pacman_packages(&mut self) -> PackerResult<()> {
         use std::process::Command;
-        
+
         info!("Importing existing pacman packages...");
-        
+
         // grab all the packages pacman knows about
         let output = Command::new("pacman")
-            .arg("-Q")  // Query installed packages
+            .arg("-Q") // Query installed packages
             .output()
             .map_err(|e| PackerError::Io(e))?;
-            
+
         if !output.status.success() {
             return Err(PackerError::InstallationFailed(
-                "Failed to query pacman database".to_string()
+                "Failed to query pacman database".to_string(),
             ));
         }
-        
+
         let installed_list = String::from_utf8_lossy(&output.stdout);
         let mut imported_count = 0;
-        
+
         for line in installed_list.lines() {
             if let Some((name, version)) = line.split_once(' ') {
                 // Skip if we already have this package
                 if self.installed.contains_key(name) {
                     continue;
                 }
-                
+
                 // get more details about this package
                 if let Ok(package) = self.get_pacman_package_info(name, version).await {
                     self.installed.insert(name.to_string(), package);
@@ -157,32 +157,36 @@ impl PackageDatabase {
                 }
             }
         }
-        
+
         info!("Imported {} packages from pacman database", imported_count);
         Ok(())
     }
-    
+
     #[allow(dead_code)]
-    async fn get_pacman_package_info(&self, name: &str, version: &str) -> PackerResult<CorePackage> {
+    async fn get_pacman_package_info(
+        &self,
+        name: &str,
+        version: &str,
+    ) -> PackerResult<CorePackage> {
         use std::process::Command;
-        
+
         // ask pacman for all the juicy details
         let output = Command::new("pacman")
-            .arg("-Qi")  // Query info for installed package
+            .arg("-Qi") // Query info for installed package
             .arg(name)
             .output()
             .map_err(|e| PackerError::Io(e))?;
-            
+
         if !output.status.success() {
             return Err(PackerError::PackageNotFound(name.to_string()));
         }
-        
+
         let info = String::from_utf8_lossy(&output.stdout);
         let mut package = CorePackage {
             name: name.to_string(),
             version: version.to_string(),
             description: String::new(),
-            repository: "system".to_string(),  // Mark as system-installed
+            repository: "system".to_string(), // Mark as system-installed
             arch: "x86_64".to_string(),
             download_size: 0,
             installed_size: 0,
@@ -194,7 +198,7 @@ impl PackageDatabase {
             source_type: SourceType::Official,
             install_date: Some(Utc::now()),
         };
-        
+
         // Parse pacman output to get more details
         for line in info.lines() {
             if let Some(desc) = line.strip_prefix("Description         : ") {
@@ -216,7 +220,7 @@ impl PackageDatabase {
                 }
             }
         }
-        
+
         Ok(package)
     }
 
@@ -322,7 +326,7 @@ impl CorePackageManager {
         let resolver = FastDependencyResolver::new()
             .with_dynamic_resolver(config.cache_dir.clone())
             .await?;
-            
+
         Ok(Self {
             config,
             database,
@@ -551,7 +555,6 @@ impl CorePackageManager {
             }
         }
 
-
         let install_result = self
             .install_with_recovery(
                 &mut transaction,
@@ -614,8 +617,14 @@ impl CorePackageManager {
         let mut shared_native_manager = None;
 
         for (i, package) in all_packages.iter().enumerate() {
-            println!("📦 [{}/{}] Installing: {} ({})", i + 1, all_packages.len(), package.name, package.repository);
-            
+            println!(
+                "📦 [{}/{}] Installing: {} ({})",
+                i + 1,
+                all_packages.len(),
+                package.name,
+                package.repository
+            );
+
             // Skip system stub packages - they're already "installed"
             if package.repository == "system" {
                 println!("✅ System package (assumed available): {}", package.name);
@@ -624,25 +633,26 @@ impl CorePackageManager {
                 self.database.mark_installed((*package).clone());
                 continue;
             }
-            
+
             match package.source_type {
-                SourceType::AUR => {
-                    match self.try_aur_install(package, transaction).await {
-                        Ok(()) => {
-                            println!("✅ Installed: {}", package.name);
-                            installed_count += 1;
-                            transaction.installed_packages.push((*package).clone());
-                            self.database.mark_installed((*package).clone());
-                        }
-                        Err(e) => {
-                            println!("❌ Failed to install AUR package {}: {}", package.name, e);
-                            failed_packages.push(package.name.clone());
-                            transaction.failed_packages.push(package.name.clone());
-                        }
+                SourceType::AUR => match self.try_aur_install(package, transaction).await {
+                    Ok(()) => {
+                        println!("✅ Installed: {}", package.name);
+                        installed_count += 1;
+                        transaction.installed_packages.push((*package).clone());
+                        self.database.mark_installed((*package).clone());
                     }
-                }
+                    Err(e) => {
+                        println!("❌ Failed to install AUR package {}: {}", package.name, e);
+                        failed_packages.push(package.name.clone());
+                        transaction.failed_packages.push(package.name.clone());
+                    }
+                },
                 _ => {
-                    match self.try_native_install_shared(package, transaction, &mut shared_native_manager).await {
+                    match self
+                        .try_native_install_shared(package, transaction, &mut shared_native_manager)
+                        .await
+                    {
                         Ok(()) => {
                             println!("✅ Installed: {}", package.name);
                             installed_count += 1;
@@ -676,15 +686,14 @@ impl CorePackageManager {
 
         // yo let's see how much space we have left
         let install_path = std::path::Path::new("/"); // just checking the whole system
-        let (_used, available) = crate::utils::get_disk_usage(install_path)
-            .unwrap_or((0, 0));
+        let (_used, available) = crate::utils::get_disk_usage(install_path).unwrap_or((0, 0));
 
         if installed_count > 0 {
             println!(
                 "🎉 Successfully installed {} packages natively!",
                 installed_count
             );
-            
+
             println!(
                 "💾 Available space: {}",
                 crate::utils::format_bytes(available)
@@ -880,7 +889,10 @@ impl CorePackageManager {
             Ok(files) => files,
             Err(e) => {
                 tokio::fs::remove_dir_all(&temp_dir).await.ok();
-                info!("Failed to download package files for {}: {}", package.name, e);
+                info!(
+                    "Failed to download package files for {}: {}",
+                    package.name, e
+                );
                 return Err(e);
             }
         };
@@ -925,7 +937,10 @@ impl CorePackageManager {
             }
             Err(e) => {
                 tokio::fs::remove_dir_all(&temp_dir).await.ok();
-                info!("Failed to install {} using native format: {}", package.name, e);
+                info!(
+                    "Failed to install {} using native format: {}",
+                    package.name, e
+                );
                 Err(e)
             }
         }
@@ -937,38 +952,44 @@ impl CorePackageManager {
         transaction: &mut InstallTransaction,
     ) -> PackerResult<()> {
         info!("Building AUR package from source: {}", package.name);
-        
+
         // For now, create a minimal implementation that installs a stub
         // In a full implementation, this would:
         // 1. Clone the AUR repository
         // 2. Build the package using makepkg
         // 3. Install the resulting package
-        
-        println!("🔨 Building AUR package: {} (stub implementation)", package.name);
-        
+
+        println!(
+            "🔨 Building AUR package: {} (stub implementation)",
+            package.name
+        );
+
         // Create a stub desktop entry for GUI applications
         if package.name.contains("desktop") || package.name.contains("gui") {
             self.create_aur_stub(package).await?;
         }
-        
+
         // Mark as successfully "installed" for now
         transaction.installed_packages.push(package.clone());
         self.database.mark_installed(package.clone());
-        
-        println!("✅ AUR package {} installed (stub - rebuild with full AUR support later)", package.name);
+
+        println!(
+            "✅ AUR package {} installed (stub - rebuild with full AUR support later)",
+            package.name
+        );
         Ok(())
     }
 
     async fn create_aur_stub(&self, package: &CorePackage) -> PackerResult<()> {
-        
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| crate::error::PackerError::ConfigError("Could not find home directory".to_string()))?;
-        
+        let home_dir = dirs::home_dir().ok_or_else(|| {
+            crate::error::PackerError::ConfigError("Could not find home directory".to_string())
+        })?;
+
         let desktop_dir = home_dir.join(".local/share/applications");
         tokio::fs::create_dir_all(&desktop_dir).await?;
-        
+
         let desktop_file_path = desktop_dir.join(format!("packer-aur-{}.desktop", package.name));
-        
+
         let desktop_content = format!(
             r#"[Desktop Entry]
 Name={}
@@ -980,14 +1001,12 @@ Type=Application
 Categories=Development;
 StartupNotify=true
 "#,
-            package.name,
-            package.description,
-            package.name
+            package.name, package.description, package.name
         );
-        
+
         tokio::fs::write(&desktop_file_path, desktop_content).await?;
         println!("📝 Created AUR stub desktop entry for {}", package.name);
-        
+
         Ok(())
     }
 
@@ -1294,8 +1313,12 @@ StartupNotify=true
                 .arg("clone")
                 .arg(format!("https://aur.archlinux.org/{}.git", package.name))
                 .arg(&build_dir)
-                .output()
-        ).await.map_err(|_| PackerError::BuildFailed(format!("Git clone timeout for {}", package.name)))??;
+                .output(),
+        )
+        .await
+        .map_err(|_| {
+            PackerError::BuildFailed(format!("Git clone timeout for {}", package.name))
+        })??;
 
         if !clone_output.status.success() {
             return Err(PackerError::BuildFailed(format!(
@@ -1310,8 +1333,10 @@ StartupNotify=true
                 .arg("-f")
                 .arg("--noconfirm")
                 .current_dir(&build_dir)
-                .output()
-        ).await.map_err(|_| PackerError::BuildFailed(format!("Makepkg timeout for {}", package.name)))??;
+                .output(),
+        )
+        .await
+        .map_err(|_| PackerError::BuildFailed(format!("Makepkg timeout for {}", package.name)))??;
 
         if !build_output.status.success() {
             return Err(PackerError::BuildFailed(format!(
@@ -1337,8 +1362,15 @@ StartupNotify=true
                             .arg(&path)
                             .arg("-C")
                             .arg(&extract_dir)
-                            .output()
-                    ).await.map_err(|_| PackerError::BuildFailed(format!("Tar extraction timeout for {}", path.display())))??;
+                            .output(),
+                    )
+                    .await
+                    .map_err(|_| {
+                        PackerError::BuildFailed(format!(
+                            "Tar extraction timeout for {}",
+                            path.display()
+                        ))
+                    })??;
 
                     if extract_output.status.success() {
                         package_files.push(extract_dir);
@@ -1363,7 +1395,8 @@ StartupNotify=true
         package_files: &[std::path::PathBuf],
         _temp_dir: &std::path::Path,
     ) -> PackerResult<crate::native_format::NativePackage> {
-        self.convert_to_native_package(package, package_files, _temp_dir).await
+        self.convert_to_native_package(package, package_files, _temp_dir)
+            .await
     }
 
     async fn convert_to_native_package(
@@ -1526,7 +1559,6 @@ StartupNotify=true
     pub async fn remove(&mut self, packages: &[String]) -> PackerResult<()> {
         info!("Removing packages: {:?}", packages);
 
-
         let mut official_packages = Vec::new();
         let mut other_packages = Vec::new();
 
@@ -1548,17 +1580,16 @@ StartupNotify=true
         }
 
         self.database.save().await?;
-        
+
         // let's check how much space we freed up
         let install_path = std::path::Path::new("/"); // checking the whole disk
-        let (_used, available) = crate::utils::get_disk_usage(install_path)
-            .unwrap_or((0, 0));
-        
+        let (_used, available) = crate::utils::get_disk_usage(install_path).unwrap_or((0, 0));
+
         println!(
             "💾 Available space: {}",
             crate::utils::format_bytes(available)
         );
-        
+
         Ok(())
     }
 

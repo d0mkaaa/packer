@@ -256,7 +256,7 @@ async fn run_command(matches: ArgMatches) -> packer::PackerResult<()> {
             let simple = sub_matches.get_flag("simple");
             let updates_only = sub_matches.get_flag("updates");
             let include_system = sub_matches.get_flag("system");
-            
+
             if simple || updates_only {
                 simple_list_packages(&mut package_manager, updates_only, include_system).await?;
             } else {
@@ -556,7 +556,7 @@ fn display_package_info(package: &packer::core::CorePackage) {
 
 async fn get_system_packages() -> packer::PackerResult<Vec<packer::core::CorePackage>> {
     use std::process::Command;
-    
+
     let output = Command::new("pacman")
         .args(&["-Q"])
         .output()
@@ -568,7 +568,7 @@ async fn get_system_packages() -> packer::PackerResult<Vec<packer::core::CorePac
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut packages = Vec::new();
-    
+
     for line in stdout.lines() {
         if let Some((name, version)) = line.split_once(' ') {
             packages.push(packer::core::CorePackage {
@@ -589,19 +589,23 @@ async fn get_system_packages() -> packer::PackerResult<Vec<packer::core::CorePac
             });
         }
     }
-    
+
     Ok(packages)
 }
 
-async fn simple_list_packages(package_manager: &mut CorePackageManager, updates_only: bool, include_system: bool) -> packer::PackerResult<()> {
+async fn simple_list_packages(
+    package_manager: &mut CorePackageManager,
+    updates_only: bool,
+    include_system: bool,
+) -> packer::PackerResult<()> {
     let mut all_packages = Vec::new();
-    
+
     // Get packer-managed packages
     let packer_installed = package_manager.list_installed();
     for pkg in packer_installed {
         all_packages.push(pkg.clone());
     }
-    
+
     // Get system packages if requested
     if include_system {
         let system_packages = get_system_packages().await?;
@@ -612,17 +616,17 @@ async fn simple_list_packages(package_manager: &mut CorePackageManager, updates_
             }
         }
     }
-    
+
     if all_packages.is_empty() {
         println!("{}", "No packages installed.".yellow());
         return Ok(());
     }
 
     let mut packages_to_show = Vec::new();
-    
+
     for package in &all_packages {
         let status = package_manager.get_package_status(&package.name);
-        
+
         if updates_only {
             if let InstallStatus::UpdateAvailable(_) = status {
                 packages_to_show.push((package, status));
@@ -631,7 +635,7 @@ async fn simple_list_packages(package_manager: &mut CorePackageManager, updates_
             packages_to_show.push((package, status));
         }
     }
-    
+
     if packages_to_show.is_empty() {
         if updates_only {
             println!("{}", "✅ All packages are up to date!".green());
@@ -657,8 +661,8 @@ async fn simple_list_packages(package_manager: &mut CorePackageManager, updates_
         let status_info = match status {
             InstallStatus::UpdateAvailable(new_version) => {
                 format!(" → {} {}", "UPDATE:".yellow(), new_version.green())
-            },
-            _ => String::new()
+            }
+            _ => String::new(),
         };
 
         println!(
@@ -675,20 +679,23 @@ async fn simple_list_packages(package_manager: &mut CorePackageManager, updates_
             println!("    {}", package.description.dimmed());
         }
     }
-    
+
     println!("\nTotal: {} packages", packages_to_show.len());
     Ok(())
 }
 
-async fn interactive_list_packages(package_manager: &mut CorePackageManager, include_system: bool) -> packer::PackerResult<()> {
+async fn interactive_list_packages(
+    package_manager: &mut CorePackageManager,
+    include_system: bool,
+) -> packer::PackerResult<()> {
     let mut all_packages = Vec::new();
-    
+
     // Get packer-managed packages
     let packer_installed = package_manager.list_installed();
     for pkg in packer_installed {
         all_packages.push(pkg.clone());
     }
-    
+
     // Get system packages if requested
     if include_system {
         let system_packages = get_system_packages().await?;
@@ -699,7 +706,7 @@ async fn interactive_list_packages(package_manager: &mut CorePackageManager, inc
             }
         }
     }
-    
+
     if all_packages.is_empty() {
         println!("{}", "No packages installed.".yellow());
         return Ok(());
@@ -708,11 +715,11 @@ async fn interactive_list_packages(package_manager: &mut CorePackageManager, inc
     let mut filtered_packages = all_packages.clone();
     let mut current_page = 0;
     const PACKAGES_PER_PAGE: usize = 20;
-    
+
     loop {
         // Clear screen
         print!("\x1B[2J\x1B[1;1H");
-        
+
         let title = if include_system {
             "📋 All Installed Packages (Interactive Mode)"
         } else {
@@ -725,18 +732,24 @@ async fn interactive_list_packages(package_manager: &mut CorePackageManager, inc
             println!("Tip: Use --system flag to include system packages from pacman");
         }
         println!("{}", "=".repeat(80));
-        
+
         if filtered_packages.is_empty() {
             println!("{}", "No packages match your search criteria.".yellow());
         } else {
             let total_pages = (filtered_packages.len() + PACKAGES_PER_PAGE - 1) / PACKAGES_PER_PAGE;
             let start_idx = current_page * PACKAGES_PER_PAGE;
             let end_idx = std::cmp::min(start_idx + PACKAGES_PER_PAGE, filtered_packages.len());
-            
-            println!("Page {}/{} | Showing {}-{} of {} packages", 
-                current_page + 1, total_pages, start_idx + 1, end_idx, filtered_packages.len());
+
+            println!(
+                "Page {}/{} | Showing {}-{} of {} packages",
+                current_page + 1,
+                total_pages,
+                start_idx + 1,
+                end_idx,
+                filtered_packages.len()
+            );
             println!();
-            
+
             for (i, package) in filtered_packages[start_idx..end_idx].iter().enumerate() {
                 let install_date = package
                     .install_date
@@ -747,8 +760,8 @@ async fn interactive_list_packages(package_manager: &mut CorePackageManager, inc
                 let status_info = match package_manager.get_package_status(&package.name) {
                     InstallStatus::UpdateAvailable(new_version) => {
                         format!(" → {} {}", "UPDATE:".yellow(), new_version.green())
-                    },
-                    _ => String::new()
+                    }
+                    _ => String::new(),
                 };
 
                 println!(
@@ -767,15 +780,15 @@ async fn interactive_list_packages(package_manager: &mut CorePackageManager, inc
                 }
             }
         }
-        
+
         println!();
         print!("Enter command: ");
         std::io::stdout().flush().unwrap();
-        
+
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).unwrap();
         let input = input.trim().to_lowercase();
-        
+
         match input.as_str() {
             "q" | "quit" | "exit" => break,
             "s" | "search" => {
@@ -784,42 +797,46 @@ async fn interactive_list_packages(package_manager: &mut CorePackageManager, inc
                 let mut search_term = String::new();
                 std::io::stdin().read_line(&mut search_term).unwrap();
                 let search_term = search_term.trim().to_lowercase();
-                
+
                 if search_term.is_empty() {
                     continue;
                 }
-                
+
                 filtered_packages = all_packages
                     .iter()
                     .filter(|pkg| {
-                        pkg.name.to_lowercase().contains(&search_term) ||
-                        pkg.description.to_lowercase().contains(&search_term) ||
-                        pkg.repository.to_lowercase().contains(&search_term)
+                        pkg.name.to_lowercase().contains(&search_term)
+                            || pkg.description.to_lowercase().contains(&search_term)
+                            || pkg.repository.to_lowercase().contains(&search_term)
                     })
                     .cloned()
                     .collect();
-                    
+
                 current_page = 0;
-            },
+            }
             "r" | "reset" => {
                 filtered_packages = all_packages.clone();
                 current_page = 0;
-            },
+            }
             "n" | "next" => {
-                let total_pages = (filtered_packages.len() + PACKAGES_PER_PAGE - 1) / PACKAGES_PER_PAGE;
+                let total_pages =
+                    (filtered_packages.len() + PACKAGES_PER_PAGE - 1) / PACKAGES_PER_PAGE;
                 if current_page + 1 < total_pages {
                     current_page += 1;
                 }
-            },
+            }
             "p" | "prev" | "previous" => {
                 if current_page > 0 {
                     current_page -= 1;
                 }
-            },
+            }
             _ => {
                 if let Ok(num) = input.parse::<usize>() {
                     let start_idx = current_page * PACKAGES_PER_PAGE;
-                    if num > 0 && num <= PACKAGES_PER_PAGE && start_idx + num - 1 < filtered_packages.len() {
+                    if num > 0
+                        && num <= PACKAGES_PER_PAGE
+                        && start_idx + num - 1 < filtered_packages.len()
+                    {
                         let package = &filtered_packages[start_idx + num - 1];
                         display_package_info(package);
                         println!("\nPress Enter to continue...");
@@ -833,7 +850,7 @@ async fn interactive_list_packages(package_manager: &mut CorePackageManager, inc
             }
         }
     }
-    
+
     println!("{}", "Exited interactive package list.".green());
     Ok(())
 }

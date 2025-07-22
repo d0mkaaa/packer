@@ -1,15 +1,19 @@
 use crate::{
+    core::{CorePackage, SourceType},
     dependency::{Dependency, DependencyGraph, DependencyResolution},
     error::{PackerError, PackerResult},
+    native_db::NativePackageDatabase,
     package::Package,
     repository::RepositoryManager,
 };
 use log::{debug, info, warn};
 use parking_lot::RwLock;
 use semver::{Version, VersionReq};
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio::time::timeout;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -96,6 +100,38 @@ pub struct ResolutionResult {
     pub upgraded_packages: Vec<(Package, Package)>,
     pub resolution_time: std::time::Duration,
     pub optimization_score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FastResolutionResult {
+    pub packages_to_install: Vec<CorePackage>,
+    pub install_order: Vec<String>,
+    pub conflicts: Vec<Conflict>,
+    pub warnings: Vec<String>,
+    pub resolution_time: std::time::Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct Conflict {
+    pub package1: String,
+    pub package2: String,
+    pub reason: ConflictReason,
+    pub severity: ConflictSeverity,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConflictReason {
+    VersionConflict { required: String, available: String },
+    PackageConflict { conflicts_with: String },
+    CircularDependency { cycle: Vec<String> },
+    NotFound { package: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictSeverity {
+    Critical,
+    Warning,
+    Info,
 }
 #[derive(Debug, Clone)]
 pub struct ConflictCheckResult {
@@ -1720,5 +1756,1197 @@ impl DependencyResolver {
 impl Default for DependencyResolver {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// Fast Dependency Resolver (from fast_resolver.rs)
+#[derive(Debug)]
+pub struct FastDependencyResolver {
+    max_depth: usize,
+    max_resolution_time: std::time::Duration,
+    prefer_official: bool,
+    dynamic_resolver: Option<DynamicPackageResolver>,
+}
+
+impl FastDependencyResolver {
+    pub fn new() -> Self {
+        Self {
+            max_depth: 10,
+            max_resolution_time: std::time::Duration::from_secs(10), // Reduced to 10 seconds for faster feedback
+            prefer_official: true,
+            dynamic_resolver: None,
+        }
+    }
+
+    pub async fn with_dynamic_resolver(mut self, cache_dir: std::path::PathBuf) -> PackerResult<Self> {
+        let mut resolver = DynamicPackageResolver::new(cache_dir);
+        resolver.initialize().await?;
+        self.dynamic_resolver = Some(resolver);
+        info!("Dynamic package resolver initialized");
+        Ok(self)
+    }
+
+    pub fn with_max_depth(mut self, depth: usize) -> Self {
+        self.max_depth = depth;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.max_resolution_time = timeout;
+        self
+    }
+
+    pub async fn resolve_dependencies(
+        &mut self,
+        packages: &[String],
+        native_db: &NativePackageDatabase,
+        installed_packages: &HashMap<String, CorePackage>,
+    ) -> PackerResult<FastResolutionResult> {
+        let start_time = std::time::Instant::now();
+        info!("Resolving dependencies for: {:?}", packages);
+        println!("🔍 Starting dependency resolution for {} package(s)...", packages.len());
+
+        let mut resolution = FastResolutionResult {
+            packages_to_install: Vec::new(),
+            install_order: Vec::new(),
+            conflicts: Vec::new(),
+            warnings: Vec::new(),
+            resolution_time: std::time::Duration::default(),
+        };
+
+        let mut to_resolve = VecDeque::new();
+        let mut resolved_packages = HashMap::new();
+        let mut visited = HashSet::new();
+
+        for package_name in packages {
+            if !installed_packages.contains_key(package_name) {
+                to_resolve.push_back((package_name.clone(), 0));
+                println!("📦 Queued package for resolution: {}", package_name);
+            } else {
+                info!("Package {} is already installed, skipping", package_name);
+                println!("✅ Package {} is already installed", package_name);
+            }
+        }
+
+        let mut progress_counter = 0;
+        const MAX_PACKAGES_TO_PROCESS: usize = 1000; // Safety limit to prevent infinite loops
+        
+        while let Some((package_name, depth)) = to_resolve.pop_front() {
+            progress_counter += 1;
+            
+            if progress_counter > MAX_PACKAGES_TO_PROCESS {
+                println!("🛑 Reached maximum package processing limit ({}), stopping to prevent infinite loops", MAX_PACKAGES_TO_PROCESS);
+                resolution.warnings.push(format!(
+                    "Stopped processing after {} packages to prevent infinite loops",
+                    MAX_PACKAGES_TO_PROCESS
+                ));
+                break;
+            }
+            
+            if progress_counter % 5 == 0 {
+                println!("🔄 Processing dependency #{}: {} (depth: {})", progress_counter, package_name, depth);
+            }
+            
+            if start_time.elapsed() > self.max_resolution_time {
+                println!("⏰ Dependency resolution timed out after {:?}", self.max_resolution_time);
+                resolution.warnings.push(format!(
+                    "Dependency resolution timed out after {:?}",
+                    self.max_resolution_time
+                ));
+                break;
+            }
+
+            if depth > self.max_depth {
+                resolution.warnings.push(format!(
+                    "Max dependency depth ({}) reached for package {}",
+                    self.max_depth, package_name
+                ));
+                continue;
+            }
+
+            if visited.contains(&package_name) {
+                continue;
+            }
+            visited.insert(package_name.clone());
+
+            match self.find_best_package(&package_name, native_db).await {
+                Some(package) => {
+                    if progress_counter <= 10 || progress_counter % 10 == 0 {
+                        println!("✓ Found package: {} v{}", package.name, package.version);
+                    }
+                    if let Some(conflict) =
+                        self.check_conflicts(&package, &resolved_packages, installed_packages)
+                    {
+                        let is_critical = matches!(conflict.severity, ConflictSeverity::Critical);
+                        resolution.conflicts.push(conflict);
+                        if is_critical {
+                            continue;
+                        }
+                    }
+
+                    for dep in &package.dependencies {
+                        let dep_name = self.parse_dependency_name(dep);
+                        if progress_counter <= 10 || progress_counter % 10 == 0 {
+                            if dep != &dep_name {
+                                println!("  📎 Dependency: {} -> parsed as: {}", dep, dep_name);
+                            } else {
+                                println!("  📎 Dependency: {}", dep_name);
+                            }
+                        }
+                        
+                        if !installed_packages.contains_key(&dep_name)
+                            && !resolved_packages.contains_key(&dep_name)
+                            && !visited.contains(&dep_name)
+                        {
+                            to_resolve.push_back((dep_name.clone(), depth + 1));
+                            if progress_counter <= 10 || progress_counter % 10 == 0 {
+                                println!("    ➕ Added to resolution queue: {}", dep_name);
+                            }
+                        } else {
+                            if progress_counter <= 10 || progress_counter % 10 == 0 {
+                                if installed_packages.contains_key(&dep_name) {
+                                    println!("    ✅ Already installed: {}", dep_name);
+                                } else if resolved_packages.contains_key(&dep_name) {
+                                    println!("    ✅ Already resolved: {}", dep_name);
+                                } else {
+                                    println!("    ⏭️  Already visited: {}", dep_name);
+                                }
+                            }
+                        }
+                    }
+
+                    resolved_packages.insert(package_name.clone(), package);
+                }
+                None => {
+                    if progress_counter <= 10 || progress_counter % 10 == 0 {
+                        println!("❌ Package not found: {}", package_name);
+                    }
+                    if self.try_resolve_missing_package(&package_name, &mut resolved_packages, native_db) {
+                        println!("🔧 Created system stub for: {}", package_name);
+                        continue;
+                    }
+                    
+                    let severity = if package_name.contains(".so") || 
+                                     package_name.starts_with("lib") ||
+                                     package_name.starts_with("qt5-") ||
+                                     package_name.contains("vulkan") ||
+                                     package_name.contains("tbb") ||
+                                     package_name.contains("fftw") ||
+                                     package_name.contains("-driver") ||
+                                     package_name.contains("font") ||
+                                     package_name.contains("lib32-") ||
+                                     self.is_likely_system_library(&package_name) {
+                        ConflictSeverity::Warning
+                    } else {
+                        match package_name.as_str() {
+                            name if name.len() < 6 && !name.contains("-") => ConflictSeverity::Critical,
+                            _ => ConflictSeverity::Warning
+                        }
+                    };
+                    
+                    resolution.conflicts.push(Conflict {
+                        package1: package_name.clone(),
+                        package2: String::new(),
+                        reason: ConflictReason::NotFound {
+                            package: package_name.clone(),
+                        },
+                        severity,
+                    });
+                }
+            }
+        }
+
+        resolution.install_order = self.calculate_install_order(&resolved_packages);
+        resolution.packages_to_install = resolution
+            .install_order
+            .iter()
+            .filter_map(|name| resolved_packages.get(name).cloned())
+            .collect();
+
+        self.validate_resolution(&mut resolution, installed_packages);
+
+        resolution.resolution_time = start_time.elapsed();
+        
+        println!("✅ Dependency resolution completed in {:?}", resolution.resolution_time);
+        println!("📋 Summary: {} packages to install, {} conflicts, {} warnings", 
+            resolution.packages_to_install.len(),
+            resolution.conflicts.len(),
+            resolution.warnings.len());
+        
+        info!(
+            "Dependency resolution completed in {:?}",
+            resolution.resolution_time
+        );
+
+        Ok(resolution)
+    }
+
+    async fn find_best_package(
+        &mut self,
+        name: &str,
+        native_db: &NativePackageDatabase,
+    ) -> Option<CorePackage> {
+        let resolved_name = self.resolve_library_to_package(name).await;
+        let search_name = resolved_name.as_deref().unwrap_or(name);
+        
+        if search_name != name {
+            debug!("Package lookup: {} -> resolved to: {}", name, search_name);
+        }
+        
+        if self.prefer_official {
+            if let Some(official_pkg) = native_db.get_official_package(search_name) {
+                debug!("Found official package: {} v{}", official_pkg.name, official_pkg.version);
+                return Some(official_pkg.clone());
+            }
+        }
+
+        if let Some(pkg) = native_db.get_package(search_name).cloned() {
+            debug!("Found package: {} v{}", pkg.name, pkg.version);
+            Some(pkg)
+        } else {
+            debug!("Package not found: {} (searched as: {})", name, search_name);
+            None
+        }
+    }
+
+    async fn resolve_library_to_package(&mut self, dep_name: &str) -> Option<String> {
+        if let Some(resolver) = &mut self.dynamic_resolver {
+            if let Some(result) = resolver.resolve_package(dep_name).await {
+                return Some(result);
+            }
+        }
+        
+        self.resolve_library_to_package_static(dep_name)
+    }
+
+    fn resolve_library_to_package_static(&self, dep_name: &str) -> Option<String> {
+        if dep_name.ends_with(".so") || dep_name.contains(".so.") {
+            let lib_name = if let Some(base) = dep_name.strip_prefix("lib") {
+                if let Some(core_name) = base.split(".so").next() {
+                    core_name.to_string()
+                } else {
+                    base.to_string()
+                }
+            } else {
+                if let Some(core_name) = dep_name.split(".so").next() {
+                    core_name.to_string()
+                } else {
+                    dep_name.to_string()
+                }
+            };
+            
+            let mapped_name = match lib_name.as_str() {
+                "ass" => "libass",
+                "bluray" => "libbluray", 
+                "bs2b" => "libbs2b",
+                "dav1d" => "dav1d",
+                "freetype" => "freetype2",
+                "harfbuzz" => "harfbuzz",
+                "jxl" => "libjxl",
+                "openmpt" => "libopenmpt",
+                "placebo" => "libplacebo",
+                "rav1e" => "rav1e",
+                "rsvg-2" => "librsvg",
+                "rubberband" => "rubberband",
+                "va" | "va-drm" | "va-x11" => "libva",
+                "vidstab" => "vid.stab",
+                "vorbisenc" | "vorbis" => "libvorbis",
+                "vpx" => "libvpx",
+                "x264" => "x264",
+                "x265" => "x265",
+                "xvidcore" => "xvidcore",
+                "zimg" => "zimg",
+                "zmq" => "zeromq",
+                "xkbcommon" => "libxkbcommon",
+                "pipewire-0.3" => "pipewire",
+                "dbus-1" => "dbus",
+                "glib-2.0" => "glib2",
+                "ncursesw" => "ncurses",
+                "readline" => "readline",
+                "systemd" => "systemd-libs",
+                "udev" => "systemd-libs",
+                "expat" => "expat",
+                "ffi" => "libffi",
+                "mount" => "util-linux-libs",
+                "idn2" => "libidn2",
+                "graphite2" => "graphite",
+                "gobject-2.0" => "glib2",
+                "gio-2.0" => "glib2",
+                "sndfile" => "libsndfile",
+                "dovi" => "libdovi",
+                "lcms2" => "lcms2",
+                "shaderc_shared" => "shaderc",
+                "vulkan" => "vulkan-icd-loader",
+                "INIReader" => "iniparser",
+                "ogg" => "libogg",
+                "fftw3" => "fftw",
+                "samplerate" => "libsamplerate",
+                "speexdsp" => "speexdsp",
+                "lsmash" => "l-smash",
+                _ => &lib_name,
+            };
+            
+            Some(mapped_name.to_string())
+        } else {
+            match dep_name {
+                "jack" => Some("jack2".to_string()),
+                "libgl" => Some("mesa".to_string()),
+                "onevpl" => Some("intel-media-driver".to_string()),
+                "sdl2" => Some("sdl2-compat".to_string()),
+                "sh" => Some("bash".to_string()),
+                _ => None,
+            }
+        }
+    }
+
+    fn check_conflicts(
+        &self,
+        package: &CorePackage,
+        resolved_packages: &HashMap<String, CorePackage>,
+        installed_packages: &HashMap<String, CorePackage>,
+    ) -> Option<Conflict> {
+        for dep in &package.dependencies {
+            let (dep_name, version_req) = self.parse_dependency_with_version(dep);
+            
+            if let Some(ref version_req) = version_req {
+                if version_req.contains("-64") || version_req.len() > 20 {
+                    warn!("Skipping malformed version requirement: {} -> {}", dep, version_req);
+                    continue;
+                }
+            }
+
+            if let Some(resolved_pkg) = resolved_packages.get(&dep_name) {
+                if let Some(ref version_req) = version_req {
+                    if !self.version_satisfies(&resolved_pkg.version, version_req) {
+                        return Some(Conflict {
+                            package1: package.name.clone(),
+                            package2: resolved_pkg.name.clone(),
+                            reason: ConflictReason::VersionConflict {
+                                required: version_req.clone(),
+                                available: resolved_pkg.version.clone(),
+                            },
+                            severity: ConflictSeverity::Warning,
+                        });
+                    }
+                }
+            }
+        }
+
+        for conflict_pkg in &package.conflicts {
+            if self.is_safe_conflict(&package.name, conflict_pkg) {
+                continue;
+            }
+            
+            if resolved_packages.contains_key(conflict_pkg)
+                || installed_packages.contains_key(conflict_pkg)
+            {
+                return Some(Conflict {
+                    package1: package.name.clone(),
+                    package2: conflict_pkg.clone(),
+                    reason: ConflictReason::PackageConflict {
+                        conflicts_with: conflict_pkg.clone(),
+                    },
+                    severity: ConflictSeverity::Critical,
+                });
+            }
+        }
+
+        None
+    }
+
+    fn is_safe_conflict(&self, package_name: &str, conflict_pkg: &str) -> bool {
+        (package_name == "jack2" && conflict_pkg == "jack") 
+            || (package_name == "jack" && conflict_pkg == "jack2")
+    }
+
+    fn calculate_install_order(&self, packages: &HashMap<String, CorePackage>) -> Vec<String> {
+        let mut order = Vec::new();
+        let mut visited = HashSet::new();
+        let mut temp_visited = HashSet::new();
+
+        for package_name in packages.keys() {
+            if !visited.contains(package_name) {
+                self.topological_sort(
+                    package_name,
+                    packages,
+                    &mut visited,
+                    &mut temp_visited,
+                    &mut order,
+                );
+            }
+        }
+
+        order.reverse();
+        order
+    }
+
+    fn topological_sort(
+        &self,
+        package_name: &str,
+        packages: &HashMap<String, CorePackage>,
+        visited: &mut HashSet<String>,
+        temp_visited: &mut HashSet<String>,
+        order: &mut Vec<String>,
+    ) {
+        if temp_visited.contains(package_name) {
+            warn!("Circular dependency detected involving package: {}", package_name);
+            return;
+        }
+
+        if visited.contains(package_name) {
+            return;
+        }
+
+        temp_visited.insert(package_name.to_string());
+
+        if let Some(package) = packages.get(package_name) {
+            for dep in &package.dependencies {
+                let dep_name = self.parse_dependency_name(dep);
+                if packages.contains_key(&dep_name) {
+                    self.topological_sort(&dep_name, packages, visited, temp_visited, order);
+                }
+            }
+        }
+
+        temp_visited.remove(package_name);
+        visited.insert(package_name.to_string());
+        order.push(package_name.to_string());
+    }
+
+    fn validate_resolution(
+        &self,
+        resolution: &mut FastResolutionResult,
+        installed_packages: &HashMap<String, CorePackage>,
+    ) {
+        let package_names: HashSet<String> = resolution
+            .packages_to_install
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+
+        for package in &resolution.packages_to_install {
+            for dep in &package.dependencies {
+                let dep_name = self.parse_dependency_name(dep);
+                if !package_names.contains(&dep_name) && !installed_packages.contains_key(&dep_name)
+                {
+                    resolution.warnings.push(format!(
+                        "Package {} requires {} which is not in the resolution set",
+                        package.name, dep_name
+                    ));
+                }
+            }
+        }
+
+        let mut official_count = 0;
+        let mut aur_count = 0;
+        let mut other_count = 0;
+
+        for package in &resolution.packages_to_install {
+            match package.source_type {
+                SourceType::Official => official_count += 1,
+                SourceType::AUR => aur_count += 1,
+                _ => other_count += 1,
+            }
+        }
+
+        if aur_count > 10 {
+            resolution.warnings.push(format!(
+                "Large number of AUR packages ({}) may take significant time to build",
+                aur_count
+            ));
+        }
+
+        info!(
+            "Resolution summary: {} official, {} AUR, {} other packages",
+            official_count, aur_count, other_count
+        );
+    }
+
+    fn parse_dependency_name(&self, dep: &str) -> String {
+        dep.split(&['=', '>', '<', '~'][..])
+            .next()
+            .unwrap_or(dep)
+            .trim()
+            .to_string()
+    }
+
+    fn parse_dependency_with_version(&self, dep: &str) -> (String, Option<String>) {
+        for op in &[">=", "<=", "==", "!=", ">", "<", "=", "~"] {
+            if let Some(pos) = dep.find(op) {
+                let name = dep[..pos].trim().to_string();
+                let version = dep[pos..].trim().to_string();
+                return (name, Some(version));
+            }
+        }
+        (dep.trim().to_string(), None)
+    }
+
+    fn version_satisfies(&self, available: &str, requirement: &str) -> bool {
+        if requirement.contains("lib32-") || available.contains("lib32-") {
+            return true;
+        }
+        
+        if available == "system" {
+            return true;
+        }
+        
+        let normalize_version = |v: &str| -> String {
+            v.split(&['-', '+'][..]).next().unwrap_or(v).to_string()
+        };
+        
+        let available_base = normalize_version(available);
+        
+        if requirement.starts_with(">=") {
+            let req_version = normalize_version(&requirement[2..]);
+            available_base >= req_version
+        } else if requirement.starts_with("<=") {
+            let req_version = normalize_version(&requirement[2..]);
+            available_base <= req_version
+        } else if requirement.starts_with("==") || requirement.starts_with("=") {
+            let req_version = if requirement.starts_with("==") {
+                normalize_version(&requirement[2..])
+            } else {
+                normalize_version(&requirement[1..])
+            };
+            if req_version.is_empty() || available_base.is_empty() {
+                return true;
+            }
+            available_base == req_version || available.starts_with(&format!("{}-", req_version))
+        } else if requirement.starts_with("!=") {
+            let req_version = normalize_version(&requirement[2..]);
+            available_base != req_version
+        } else if requirement.starts_with(">") {
+            let req_version = normalize_version(&requirement[1..]);
+            available_base > req_version
+        } else if requirement.starts_with("<") {
+            let req_version = normalize_version(&requirement[1..]);
+            available_base < req_version
+        } else {
+            true
+        }
+    }
+
+    fn try_resolve_missing_package(&self, package_name: &str, resolved_packages: &mut HashMap<String, CorePackage>, native_db: &NativePackageDatabase) -> bool {
+        // first let's try the name alias thing
+        if let Some(real_name) = self.resolve_package_alias(package_name) {
+            println!("🔄 Trying package alias: {} → {}", package_name, real_name);
+            
+            // Try to find the real package
+            if let Some(package) = self.search_package_in_all_sources(&real_name, native_db) {
+                println!("✅ Found aliased package: {} (as {})", package_name, real_name);
+                resolved_packages.insert(package_name.to_string(), package);
+                return true;
+            }
+        }
+        
+        // ok that didn't work, let's see if it actually exists somewhere
+        if self.verify_system_package_exists(package_name) {
+            println!("✅ Verified system package exists: {}", package_name);
+            
+            let stub_package = CorePackage {
+                name: package_name.to_string(),
+                version: "system-verified".to_string(),
+                description: format!("Verified system package: {}", package_name),
+                repository: "system".to_string(),
+                arch: "x86_64".to_string(),
+                download_size: 0,
+                installed_size: 0,
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+                maintainer: "System".to_string(),
+                url: "".to_string(),
+                checksum: None,
+                source_type: crate::core::SourceType::Official,
+                install_date: None,
+            };
+            
+            resolved_packages.insert(package_name.to_string(), stub_package);
+            return true;
+        }
+        
+        // Only create unverified stubs for critical system libraries as last resort
+        if self.is_critical_system_library(package_name) {
+            println!("⚠️  Creating unverified stub for critical library: {}", package_name);
+            println!("   This package may need to be installed manually if missing!");
+            
+            let stub_package = CorePackage {
+                name: package_name.to_string(),
+                version: "unverified-stub".to_string(),
+                description: format!("UNVERIFIED system library: {}", package_name),
+                repository: "system".to_string(),
+                arch: "x86_64".to_string(),
+                download_size: 0,
+                installed_size: 0,
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+                maintainer: "System".to_string(),
+                url: "".to_string(),
+                checksum: None,
+                source_type: crate::core::SourceType::Official,
+                install_date: None,
+            };
+            
+            resolved_packages.insert(package_name.to_string(), stub_package);
+            return true;
+        }
+        
+        false
+    }
+
+    fn resolve_package_alias(&self, package_name: &str) -> Option<String> {
+        // some packages have dumb names so we fix them here
+        let aliases = [
+            ("jack", "jack2"),
+            ("pulse", "pulseaudio"),
+            ("alsa", "alsa-lib"),
+            ("openssl", "openssl"),
+            ("ssl", "openssl"),
+            ("crypto", "openssl"),
+            ("qt5", "qt5-base"),
+            ("qt6", "qt6-base"),
+            ("python", "python3"),
+            ("pip", "python-pip"),
+            ("nodejs", "nodejs"),
+            ("node", "nodejs"),
+            ("mysql", "mariadb"),
+            ("postgresql", "postgresql"),
+            ("redis", "redis"),
+            ("nginx", "nginx"),
+            ("apache", "apache"),
+            ("httpd", "apache"),
+        ];
+        
+        aliases.iter()
+            .find(|(alias, _)| *alias == package_name)
+            .map(|(_, real_name)| real_name.to_string())
+    }
+    
+    fn search_package_in_all_sources(&self, package_name: &str, native_db: &NativePackageDatabase) -> Option<CorePackage> {
+        // let's check our own database first
+        let packages = native_db.search_packages(package_name);
+        if let Some(package) = packages.first() {
+            return Some(CorePackage {
+                name: package.name.clone(),
+                version: package.version.clone(),
+                description: package.description.clone(),
+                repository: package.repository.clone(),
+                arch: package.arch.clone(),
+                download_size: package.download_size,
+                installed_size: package.installed_size,
+                dependencies: package.dependencies.clone(),
+                conflicts: package.conflicts.clone(),
+                maintainer: package.maintainer.clone(),
+                url: package.url.clone(),
+                checksum: package.checksum.clone(),
+                source_type: match package.repository.as_str() {
+                    "extra" | "core" | "community" => crate::core::SourceType::Official,
+                    "aur" => crate::core::SourceType::AUR,
+                    _ => crate::core::SourceType::Binary,
+                },
+                install_date: None,
+            });
+        }
+        
+        None
+    }
+    
+    fn verify_system_package_exists(&self, package_name: &str) -> bool {
+        use std::process::Command;
+        
+        // let's see if pacman already has this package
+        if let Ok(output) = Command::new("pacman")
+            .args(&["-Q", package_name])
+            .output() {
+            if output.status.success() {
+                return true;
+            }
+        }
+        
+        // maybe it's in the repos even if not installed
+        if let Ok(output) = Command::new("pacman")
+            .args(&["-Si", package_name])
+            .output() {
+            if output.status.success() {
+                return true;
+            }
+        }
+        
+        // if it's a lib, maybe we can find the file somewhere
+        if package_name.starts_with("lib") {
+            let possible_paths = [
+                format!("/usr/lib/{}.so", package_name),
+                format!("/usr/lib/lib{}.so", package_name),
+                format!("/usr/lib/x86_64-linux-gnu/{}.so", package_name),
+                format!("/usr/lib/x86_64-linux-gnu/lib{}.so", package_name),
+            ];
+            
+            for path in &possible_paths {
+                if std::path::Path::new(path).exists() {
+                    return true;
+                }
+            }
+        }
+        
+        // last resort: check if it's a program we can run
+        if let Ok(output) = Command::new("which")
+            .arg(package_name)
+            .output() {
+            if output.status.success() {
+                return true;
+            }
+        }
+        
+        false
+    }
+    
+    fn is_critical_system_library(&self, name: &str) -> bool {
+        // only make fake packages for really important system stuff
+        let critical_libs = [
+            "glibc", "gcc-libs", "bash", "coreutils", "systemd",
+            "linux", "linux-headers", "glib2", "gtk3", "gtk4",
+            "libx11", "libxcb", "mesa", "vulkan-icd-loader",
+        ];
+        
+        critical_libs.contains(&name) ||
+        (name.starts_with("lib") && (
+            name.contains("x11") || 
+            name.contains("gtk") || 
+            name.contains("glib") ||
+            name.contains("vulkan") ||
+            name.contains("mesa") ||
+            name.contains("gl")
+        ))
+    }
+
+    fn is_likely_system_library(&self, name: &str) -> bool {
+        let common_system_libs = [
+            "glib", "gtk", "cairo", "pango", "gdk", "gio", "gobject",
+            "fontconfig", "freetype", "harfbuzz", "pixbuf", "rsvg",
+            "webp", "tiff", "png", "jpeg", "gif", "exif", "lcms",
+            "poppler", "iniparser", "readline", "ncurses", "expat",
+            "zlib", "bzip2", "lzma", "ssl", "crypto", "curl", "xml2",
+            "sqlite", "pcre", "boost", "python", "qt5", "qt6",
+            "xslt", "fftw", "blas", "lapack", "gsl", "hdf5",
+        ];
+        
+        let name_lower = name.to_lowercase();
+        
+        if common_system_libs.iter().any(|lib| name_lower.contains(lib)) {
+            return true;
+        }
+        
+        if name_lower.starts_with("lib") && (
+            name_lower.contains("dev") ||
+            name_lower.contains("devel") ||
+            name_lower.contains("headers") ||
+            name_lower.ends_with("-dev") ||
+            name_lower.ends_with("-devel")
+        ) {
+            return true;
+        }
+        
+        if name_lower.starts_with("lib") && (
+            name_lower.contains(".so") ||
+            name_lower.matches(char::is_numeric).count() > 0
+        ) {
+            return true;
+        }
+        
+        false
+    }
+
+    pub fn is_critical_conflict(&self, conflicts: &[Conflict]) -> bool {
+        conflicts
+            .iter()
+            .any(|c| c.severity == ConflictSeverity::Critical)
+    }
+
+    pub fn format_conflicts(&self, conflicts: &[Conflict]) -> Vec<String> {
+        conflicts
+            .iter()
+            .map(|conflict| match &conflict.reason {
+                ConflictReason::VersionConflict {
+                    required,
+                    available,
+                } => {
+                    format!(
+                        "Version conflict: {} requires {}, but {} is available",
+                        conflict.package1, required, available
+                    )
+                }
+                ConflictReason::PackageConflict { conflicts_with } => {
+                    format!(
+                        "Package conflict: {} conflicts with {}",
+                        conflict.package1, conflicts_with
+                    )
+                }
+                ConflictReason::CircularDependency { cycle } => {
+                    format!("Circular dependency: {}", cycle.join(" -> "))
+                }
+                ConflictReason::NotFound { package } => {
+                    format!("Package not found: {}", package)
+                }
+            })
+            .collect()
+    }
+}
+
+impl Default for FastDependencyResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Dynamic Package Resolver (from dynamic_resolver.rs)
+#[derive(Debug, Deserialize)]
+struct ArchSearchResult {
+    results: Vec<ArchPackage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct ArchPackage {
+    #[serde(rename = "pkgname")]
+    name: String,
+    #[serde(rename = "pkgdesc")]
+    description: String,
+    repo: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct PkgsOrgResult {
+    packages: Vec<PkgsOrgPackage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct PkgsOrgPackage {
+    name: String,
+    repo: String,
+    summary: String,
+}
+
+#[derive(Debug)]
+pub struct DynamicPackageResolver {
+    cache: HashMap<String, String>,
+    #[allow(dead_code)]
+    client: reqwest::Client,
+    cache_file: std::path::PathBuf,
+}
+
+impl DynamicPackageResolver {
+    pub fn new(cache_dir: std::path::PathBuf) -> Self {
+        let cache_file = cache_dir.join("dynamic_package_mappings.json");
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .user_agent("packer/0.2.2")
+            .build()
+            .unwrap_or_default();
+
+        Self {
+            cache: HashMap::new(),
+            client,
+            cache_file,
+        }
+    }
+
+    pub async fn initialize(&mut self) -> PackerResult<()> {
+        self.load_cache().await?;
+        Ok(())
+    }
+
+    pub async fn resolve_package(&mut self, dependency: &str) -> Option<String> {
+        if let Some(cached) = self.cache.get(dependency) {
+            debug!("Cache hit for dependency: {} -> {}", dependency, cached);
+            return Some(cached.clone());
+        }
+
+        if let Some(resolved) = self.try_all_strategies(dependency).await {
+            self.cache.insert(dependency.to_string(), resolved.clone());
+            if let Err(e) = self.save_cache().await {
+                warn!("Failed to save cache: {}", e);
+            }
+            return Some(resolved);
+        }
+
+        None
+    }
+
+    async fn try_all_strategies(&self, dependency: &str) -> Option<String> {
+        if let Some(result) = self.search_arch_packages(dependency).await {
+            info!("Arch search resolved: {} -> {}", dependency, result);
+            return Some(result);
+        }
+
+        if let Some(result) = self.resolve_library_name(dependency).await {
+            info!("Library parsing resolved: {} -> {}", dependency, result);
+            return Some(result);
+        }
+
+        if let Some(result) = self.search_pkgs_org(dependency).await {
+            info!("pkgs.org resolved: {} -> {}", dependency, result);
+            return Some(result);
+        }
+
+        if let Some(result) = self.apply_smart_heuristics(dependency) {
+            info!("Heuristics resolved: {} -> {}", dependency, result);
+            return Some(result);
+        }
+
+        if let Some(result) = self.fuzzy_match_existing(dependency).await {
+            info!("Fuzzy match resolved: {} -> {}", dependency, result);
+            return Some(result);
+        }
+
+        None
+    }
+
+    async fn search_arch_packages(&self, dependency: &str) -> Option<String> {
+        let search_terms = self.generate_search_terms(dependency);
+        
+        for term in search_terms {
+            let url = format!(
+                "https://archlinux.org/packages/search/json/?name={}",
+                urlencoding::encode(&term)
+            );
+
+            match timeout(Duration::from_secs(5), self.client.get(&url).send()).await {
+                Ok(Ok(response)) => {
+                    if let Ok(result) = response.json::<ArchSearchResult>().await {
+                        if let Some(package) = result.results.first() {
+                            return Some(package.name.clone());
+                        }
+                    }
+                }
+                _ => continue,
+            }
+
+            let desc_url = format!(
+                "https://archlinux.org/packages/search/json/?q={}",
+                urlencoding::encode(&term)
+            );
+
+            match timeout(Duration::from_secs(5), self.client.get(&desc_url).send()).await {
+                Ok(Ok(response)) => {
+                    if let Ok(result) = response.json::<ArchSearchResult>().await {
+                        for package in result.results {
+                            if self.is_relevant_match(&term, &package.name, &package.description) {
+                                return Some(package.name);
+                            }
+                        }
+                    }
+                }
+                _ => continue,
+            }
+        }
+
+        None
+    }
+
+    async fn resolve_library_name(&self, dependency: &str) -> Option<String> {
+        let lib_name = self.extract_library_name(dependency);
+        
+        let candidates = vec![
+            lib_name.clone(),
+            format!("lib{}", lib_name),
+            format!("{}-dev", lib_name),
+            format!("lib{}-dev", lib_name),
+            format!("{}-devel", lib_name),
+            format!("lib{}-devel", lib_name),
+            lib_name.replace("_", "-"),
+            lib_name.replace("-", "_"),
+        ];
+
+        for candidate in candidates {
+            if let Some(result) = self.search_arch_packages(&candidate).await {
+                return Some(result);
+            }
+        }
+
+        None
+    }
+
+    async fn search_pkgs_org(&self, dependency: &str) -> Option<String> {
+        let search_term = self.extract_library_name(dependency);
+        let _url = format!(
+            "https://pkgs.org/search/?q={}&on=name&arch=x86_64",
+            urlencoding::encode(&search_term)
+        );
+
+        debug!("Would search pkgs.org for: {}", search_term);
+        None
+    }
+
+    fn apply_smart_heuristics(&self, dependency: &str) -> Option<String> {
+        if dependency.contains(".so") {
+            let base_name = dependency
+                .split(".so")
+                .next()?
+                .trim_start_matches("lib");
+            
+            let candidates = vec![
+                base_name.to_string(),
+                format!("lib{}", base_name),
+                format!("{}-libs", base_name),
+                format!("lib{}-libs", base_name),
+            ];
+
+            return candidates.first().cloned();
+        }
+
+        if dependency.starts_with("lib32-") {
+            return Some(dependency.to_string());
+        }
+
+        if dependency.starts_with("lib") && !dependency.starts_with("lib32-") {
+            let base = &dependency[3..];
+            return Some(format!("lib{}", base));
+        }
+
+        if let Some(base) = dependency.split('>').next() {
+            if let Some(base) = base.split('<').next() {
+                if let Some(base) = base.split('=').next() {
+                    return Some(base.trim().to_string());
+                }
+            }
+        }
+
+        if dependency.starts_with("python-") || dependency.contains("python") {
+            if dependency.starts_with("python3") {
+                return Some("python".to_string());
+            }
+            return Some(dependency.to_string());
+        }
+
+        if dependency.contains("qt") || dependency.contains("Qt") {
+            if dependency.contains("5") {
+                return Some("qt5-base".to_string());
+            } else if dependency.contains("6") {
+                return Some("qt6-base".to_string());
+            }
+        }
+
+        None
+    }
+
+    async fn fuzzy_match_existing(&self, _dependency: &str) -> Option<String> {
+        None
+    }
+
+    fn generate_search_terms(&self, dependency: &str) -> Vec<String> {
+        let mut terms = Vec::new();
+        
+        terms.push(dependency.to_string());
+        
+        let base = self.extract_library_name(dependency);
+        if base != dependency {
+            terms.push(base.clone());
+        }
+        
+        terms.push(base.replace("_", "-"));
+        terms.push(base.replace("-", "_"));
+        
+        if !base.starts_with("lib") {
+            terms.push(format!("lib{}", base));
+        } else {
+            terms.push(base[3..].to_string());
+        }
+        
+        terms.sort();
+        terms.dedup();
+        terms
+    }
+
+    fn extract_library_name(&self, dependency: &str) -> String {
+        let mut name = dependency;
+        
+        if let Some(pos) = name.find(&['>', '<', '=', '!'][..]) {
+            name = &name[..pos];
+        }
+        
+        if let Some(pos) = name.find(".so") {
+            name = &name[..pos];
+        }
+        
+        if name.starts_with("lib") && name.len() > 3 {
+            name = &name[3..];
+        }
+        
+        let suffixes = ["-dev", "-devel", "-libs", "-headers"];
+        for suffix in &suffixes {
+            if name.ends_with(suffix) {
+                name = &name[..name.len() - suffix.len()];
+                break;
+            }
+        }
+        
+        name.trim().to_string()
+    }
+
+    fn is_relevant_match(&self, search_term: &str, package_name: &str, description: &str) -> bool {
+        let search_lower = search_term.to_lowercase();
+        let name_lower = package_name.to_lowercase();
+        let desc_lower = description.to_lowercase();
+        
+        if name_lower == search_lower {
+            return true;
+        }
+        
+        if name_lower.contains(&search_lower) {
+            return true;
+        }
+        
+        if desc_lower.contains(&search_lower) && (
+            desc_lower.contains("library") || 
+            desc_lower.contains("development") ||
+            desc_lower.contains("headers")
+        ) {
+            return true;
+        }
+        
+        false
+    }
+
+    async fn load_cache(&mut self) -> PackerResult<()> {
+        if self.cache_file.exists() {
+            match tokio::fs::read_to_string(&self.cache_file).await {
+                Ok(content) => {
+                    if let Ok(cache) = serde_json::from_str::<HashMap<String, String>>(&content) {
+                        self.cache = cache;
+                        info!("Loaded {} cached package mappings", self.cache.len());
+                    }
+                }
+                Err(e) => warn!("Failed to load cache: {}", e),
+            }
+        }
+        Ok(())
+    }
+
+    async fn save_cache(&self) -> PackerResult<()> {
+        if let Some(parent) = self.cache_file.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        
+        let content = serde_json::to_string_pretty(&self.cache)?;
+        tokio::fs::write(&self.cache_file, content).await?;
+        
+        debug!("Saved {} package mappings to cache", self.cache.len());
+        Ok(())
+    }
+
+    pub fn get_cache_stats(&self) -> (usize, f64) {
+        let total_entries = self.cache.len();
+        let hit_rate = 0.0;
+        (total_entries, hit_rate)
+    }
+
+    pub async fn clear_cache(&mut self) -> PackerResult<()> {
+        self.cache.clear();
+        if self.cache_file.exists() {
+            tokio::fs::remove_file(&self.cache_file).await?;
+        }
+        info!("Cleared package mapping cache");
+        Ok(())
     }
 }

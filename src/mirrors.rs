@@ -186,7 +186,7 @@ impl MirrorManager {
 
         let client = reqwest::Client::builder()
             .timeout(self.config.test_timeout)
-            .user_agent("packer/0.2.1")
+            .user_agent("packer/0.2.2")
             .build()?;
 
         let result = timeout(self.config.test_timeout, async {
@@ -354,7 +354,7 @@ impl MirrorManager {
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
-            .user_agent("packer/0.2.1")
+            .user_agent("packer/0.2.2")
             .build()?;
 
         let response = client.get(&self.config.mirror_list_url).send().await?;
@@ -644,7 +644,7 @@ impl MirrorManagerTestHelper {
 
         let client = reqwest::Client::builder()
             .timeout(self.config.test_timeout)
-            .user_agent("packer/0.2.1")
+            .user_agent("packer/0.2.2")
             .build()?;
 
         match timeout(self.config.test_timeout, client.head(&test_url).send()).await {

@@ -262,6 +262,7 @@ pub enum ExploitReliability {
     Manual,
 }
 
+#[allow(dead_code)]
 impl AdvancedSecurityScanner {
     pub fn new(config: Config) -> Self {
         let gpg_manager = GPGManager::new(config.clone());

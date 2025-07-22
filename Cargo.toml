@@ -1,6 +1,6 @@
 [package]
 name = "packer"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 authors = ["d0mkaaa <rutkauskasdomantas@gmail.com>"]
 description = "A modern, fast package manager for Arch Linux written in Rust"
@@ -48,6 +48,7 @@ chrono = { version = "0.4.41", features = ["serde"] }
 semver = { version = "1.0.26", features = ["serde"] }
 directories = "5.0.1"
 indicatif = { version = "0.17.11", features = ["tokio"] }
+urlencoding = "2.1"
 lazy_static = "1.4"
 futures = "0.3"
 tar = "0.4"

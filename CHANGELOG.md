@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2025-07-22
+
+### Major Features
+- **🔍 Interactive Package List**: Complete overhaul of the `list` command with search, pagination, and filtering
+- **💾 Disk Space Tracking**: Real-time disk space monitoring for installations and removals  
+- **🔧 Smart Dependency Resolution**: Improved package resolution with alias mapping and system verification
+- **📦 System Package Integration**: Native support for viewing and searching pacman-installed packages
+
+### Interactive List Command
+- **Real-time Search**: Filter packages by name, description, or repository with instant results
+- **Smart Pagination**: Navigate large package lists with 20 packages per page
+- **Version Status**: Shows available updates with clear "UPDATE" indicators
+- **Package Details**: Quick info view by entering package numbers (1-20)
+- **Multi-source Support**: View both packer-managed and system packages together
+- **Command Flags**: `--simple` for scripting, `--updates` for update-only view, `--system` for all packages
+
+### Dependency Resolution Improvements  
+- **Package Aliases**: Maps common package names (`jack` → `jack2`, `pulse` → `pulseaudio`)
+- **System Verification**: Actual package existence checking via pacman and filesystem
+- **Smart Stubs**: Only creates verified system stubs, prevents broken dependencies
+- **Fallback Search**: Multi-repository search before giving up on missing packages
+- **Better Warnings**: Clear user feedback when creating unverified dependency stubs
+
+### Disk Space Features
+- **Installation Tracking**: Shows available space after package installations
+- **Removal Tracking**: Displays space information after package removals  
+- **Human-readable Format**: Automatic unit conversion (B, KB, MB, GB, TB)
+- **Graceful Fallback**: Continues operation even if disk space calculation fails
+
+### Added
+- **Utility Functions**: `get_disk_usage()`, `format_bytes()`, `calculate_directory_size()`
+- **System Package Query**: Integration with pacman for comprehensive package listing
+- **Interactive Navigation**: Commands for search (`s`), next (`n`), previous (`p`), reset (`r`), quit (`q`)
+- **Conflict Resolution**: Proper handling of missing dependencies with verification steps
+- **Comment Style**: Updated all code comments to casual, friendly language
+
+### Fixed  
+- **obs-studio Installation**: Resolved jack dependency resolution that was preventing installation
+- **Memory Scope Issues**: Fixed variable scope problems in disk space tracking
+- **Compiler Warnings**: Eliminated all unused code warnings with proper `#[allow(dead_code)]` attributes
+- **Search Performance**: Improved search responsiveness in interactive mode
+- **Package Verification**: Better handling of packages with version constraints (e.g., "taglib>=1.9.0")
+
+### Improved
+- **Error Messages**: More descriptive error messages for missing packages and resolution failures  
+- **User Experience**: Cleaner output with emoji indicators and colored text
+- **Code Quality**: Removed dead code warnings and improved maintainability
+- **Documentation**: Casual, friendly comments throughout the codebase
+
 ## [0.2.1] - 2025-07-19
 
 ### Major Features

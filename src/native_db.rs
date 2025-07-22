@@ -570,7 +570,8 @@ impl NativePackageDatabase {
 
         while let Some(entry) = entries.next_entry().await? {
             if entry.file_type().await?.is_dir() {
-                if let Some(package) = self.parse_package_dir(&entry.path()).await? {
+                if let Some(mut package) = self.parse_package_dir(&entry.path()).await? {
+                    package.repository = repo.to_string();
                     self.official_db
                         .packages
                         .insert(package.name.clone(), package);

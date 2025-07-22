@@ -210,6 +210,7 @@ pub enum SuggestionPriority {
     Optional,
 }
 
+#[allow(dead_code)]
 impl ParallelOperationsManager {
     pub fn new(config: Config) -> Self {
         let max_downloads = config.max_parallel_downloads;
@@ -326,6 +327,7 @@ impl ParallelOperationsManager {
         Ok(batch_results)
     }
 
+    #[allow(dead_code)]
     async fn execute_single_task(&self, task: ParallelTask) -> TaskResult {
         let start_time = Instant::now();
         let task_id = task.task_id.clone();
@@ -670,6 +672,7 @@ impl ParallelOperationsManager {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ParallelOperationsManagerRef {
     resource_monitor: Arc<RwLock<ResourceMonitor>>,
     performance_metrics: Arc<RwLock<PerformanceMetrics>>,

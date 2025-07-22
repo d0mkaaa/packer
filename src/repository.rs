@@ -1837,6 +1837,7 @@ impl RepositoryManager {
 
     // Removed: parse_pacman_dependencies and parse_pacman_size - no longer needed with native database
 
+    #[allow(dead_code)]
     async fn discover_package(&self, name: &str) -> PackerResult<Option<Package>> {
         info!("Auto-discovering package: {}", name);
         if let Some(github_client) = &self.github_client {

@@ -2063,6 +2063,7 @@ impl PackageManager {
     }
 
     // simplified security summary for compatibility
+    #[allow(dead_code)]
     async fn create_security_summary(&self, packages: &[Package]) -> PackerResult<SecuritySummary> {
         Ok(SecuritySummary {
             verified_signatures: packages.len(),
@@ -3184,6 +3185,7 @@ impl PackageManager {
         }
         Ok(extraction_result)
     }
+    #[allow(dead_code)]
     fn classify_file_type(&self, path: &PathBuf) -> crate::utils::FileType {
         use crate::utils::FileType;
         let path_str = path.to_string_lossy().to_lowercase();
